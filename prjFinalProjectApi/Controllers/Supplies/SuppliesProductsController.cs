@@ -49,6 +49,13 @@ namespace prjFinalProjectApi.Controllers.Supplies
         [HttpGet("{id}")]
         public async Task<ActionResult<SuppliesProduct>> GetSuppliesProduct(int id)
         {
+            var supplieslist = await _context.SuppliesProducts.FindAsync(id);
+
+            if (supplieslist == null)
+            {
+                return NotFound();
+            }
+
             var supplieslistDto = await (
                                 from SuppliesProducts in _context.SuppliesProducts
                                 join SuppliesSupplierName in _context.SuppliesSuppliers on SuppliesProducts.SupplierId equals SuppliesSupplierName.SuppliesSupplierId
@@ -56,20 +63,15 @@ namespace prjFinalProjectApi.Controllers.Supplies
                                 where SuppliesProducts.SuppliesProductId == id
                                 select new SupplieslistDto
                                 {
-                                    SuppliesProductID = SuppliesProducts.SuppliesProductId,
-                                    SuppliesProductName = SuppliesProducts.SuppliesProductName,
-                                    QuantityPerUnit = SuppliesProducts.QuantityPerUnit,
-                                    UnitsInStock = SuppliesProducts.UnitsInStock,
-                                    PricePerUnit = SuppliesProducts.PricePerUnit,
+                                    SuppliesProductID = supplieslist.SuppliesProductId,
+                                    SuppliesProductName = supplieslist.SuppliesProductName,
+                                    QuantityPerUnit = supplieslist.QuantityPerUnit,
+                                    UnitsInStock = supplieslist.UnitsInStock,
+                                    PricePerUnit = supplieslist.PricePerUnit,
                                     SuppliesSupplierName = SuppliesSupplierName.SuppliesSupplierName,
                                     SuppliesCategoryName = SuppliesCategoryName.SuppliesCategoryName,
-                                    Exist = SuppliesProducts.Exist
+                                    Exist = supplieslist.Exist
                                 }).FirstOrDefaultAsync();
-
-            if (supplieslistDto == null)
-            {
-                return NotFound();
-            }
 
             return Ok(supplieslistDto);
         }
@@ -84,7 +86,18 @@ namespace prjFinalProjectApi.Controllers.Supplies
                 return BadRequest();
             }
 
-            _context.Entry(suppliesProduct).State = EntityState.Modified;
+            var _suppliesProductToUpdate = await _context.SuppliesProducts.FindAsync(id);
+            if(_suppliesProductToUpdate == null) return NotFound();
+
+            _suppliesProductToUpdate.SuppliesProductName = suppliesProduct.SuppliesProductName;
+            _suppliesProductToUpdate.QuantityPerUnit = suppliesProduct.QuantityPerUnit;
+            _suppliesProductToUpdate.UnitsInStock = suppliesProduct.UnitsInStock;
+            _suppliesProductToUpdate.PricePerUnit = suppliesProduct.PricePerUnit;
+            _suppliesProductToUpdate.SupplierId = suppliesProduct.SupplierId;
+            _suppliesProductToUpdate.SuppliesCategoryId = suppliesProduct.SuppliesCategoryId;
+            _suppliesProductToUpdate.Exist = suppliesProduct.Exist;
+
+            _context.SuppliesProducts.Update(_suppliesProductToUpdate);
 
             try
             {
@@ -110,28 +123,22 @@ namespace prjFinalProjectApi.Controllers.Supplies
         [HttpPost]
         public async Task<ActionResult<SuppliesProduct>> PostSuppliesProduct(SuppliesProduct suppliesProduct)
         {
+            var addSuppliesProduct = new SuppliesProduct
+            {
+                SuppliesProductName = suppliesProduct.SuppliesProductName,
+                QuantityPerUnit = suppliesProduct.QuantityPerUnit,
+                UnitsInStock = suppliesProduct.UnitsInStock,
+                PricePerUnit = suppliesProduct.PricePerUnit,
+                SupplierId = suppliesProduct.SupplierId,
+                SuppliesCategoryId = suppliesProduct.SuppliesCategoryId,
+                Exist = suppliesProduct.Exist
+            };
+
             _context.SuppliesProducts.Add(suppliesProduct);
             await _context.SaveChangesAsync();
 
             return CreatedAtAction("GetSuppliesProduct", new { id = suppliesProduct.SuppliesProductId }, suppliesProduct);
         }
-
-        // DELETE: api/SuppliesProducts/5
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteSuppliesProduct(int id)
-        {
-            var suppliesProduct = await _context.SuppliesProducts.FindAsync(id);
-            if (suppliesProduct == null)
-            {
-                return NotFound();
-            }
-
-            _context.SuppliesProducts.Remove(suppliesProduct);
-            await _context.SaveChangesAsync();
-
-            return NoContent();
-        }
-
         private bool SuppliesProductExists(int id)
         {
             return _context.SuppliesProducts.Any(e => e.SuppliesProductId == id);
