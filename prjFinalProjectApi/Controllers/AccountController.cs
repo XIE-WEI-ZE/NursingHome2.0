@@ -426,7 +426,7 @@ namespace prjFinalProjectApi.Controllers
             if (member == null)
                 return NotFound(new { message = "會員不存在" });
 
-            // 更新密碼（維持你原本 PBKDF2）
+            // 更新密碼
             byte[] salt = GenerateSalt();
             string hashedPassword = HashPassword(dto.NewPassword, salt);
 

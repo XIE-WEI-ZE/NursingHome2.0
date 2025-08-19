@@ -3,11 +3,12 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace prjFinalProjectApi.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
+    [Route("api/city")]
     public class CityController : ControllerBase
     {
         [HttpGet("cities")]
+        [HttpGet("all")]
         public IActionResult GetCities()
         {
             var data = new Dictionary<string, List<string>>
