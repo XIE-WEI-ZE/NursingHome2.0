@@ -39,6 +39,14 @@ builder.Services.AddSwaggerGen(c =>
             { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
           Array.Empty<string>() }
     });
+
+    // 🔹 解決 DTO 名稱重複 (原因1)
+    c.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
+
+    // 🔹 解決 DateOnly / TimeOnly 無法序列化 (原因2)
+    c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
+    c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
+
 });
 
 // EF Core
