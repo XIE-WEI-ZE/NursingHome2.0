@@ -123,17 +123,6 @@ namespace prjFinalProjectApi.Controllers.Supplies
         [HttpPost]
         public async Task<ActionResult<SuppliesProduct>> PostSuppliesProduct(SuppliesProduct suppliesProduct)
         {
-            var addSuppliesProduct = new SuppliesProduct
-            {
-                SuppliesProductName = suppliesProduct.SuppliesProductName,
-                QuantityPerUnit = suppliesProduct.QuantityPerUnit,
-                UnitsInStock = suppliesProduct.UnitsInStock,
-                PricePerUnit = suppliesProduct.PricePerUnit,
-                SupplierId = suppliesProduct.SupplierId,
-                SuppliesCategoryId = suppliesProduct.SuppliesCategoryId,
-                Exist = suppliesProduct.Exist
-            };
-
             _context.SuppliesProducts.Add(suppliesProduct);
             await _context.SaveChangesAsync();
 
