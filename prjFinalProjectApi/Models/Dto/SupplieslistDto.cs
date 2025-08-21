@@ -12,7 +12,11 @@
 
         public int? PricePerUnit { get; set; }
 
+        public int? SupplierId { get; set; }
+
         public string? SuppliesSupplierName { get; set; }
+
+        public int? SuppliesCategoryId { get; set; }
 
         public string? SuppliesCategoryName { get; set; }
 
