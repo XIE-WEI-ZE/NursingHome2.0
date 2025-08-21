@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using prjFinalProjectApi.Models;
@@ -79,6 +80,48 @@ namespace prjFinalProjectApi.Controllers.Backend
                 .ToListAsync();
 
             return Ok(records);
+        }
+
+
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateRecord(int id, [FromBody] HealthRecordDto dto)
+        {
+            try
+            {
+                var record = await _context.MemberDailyHealthRecords.FirstOrDefaultAsync(r => r.FId == id);
+                if (record == null)
+                    return NotFound(new { message = "查無此紀錄" });
+                if (dto.RecordDate != null)
+                    record.FRecordDate = DateOnly.FromDateTime(dto.RecordDate.Value);
+                record.FSystolic = dto.Systolic;
+                record.FDiastolic = dto.Diastolic;
+                record.FPulse = dto.Pulse;
+                record.FIorecord = dto.IORecord;
+                record.FCheckPeriod = dto.CheckPeriod;
+                record.FNotes = dto.Notes;
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "健康紀錄已經更新" });
+            }
+            catch (Exception ex) {
+                return StatusCode(500, new { message = "更新失敗", error = ex.Message });
+            }
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteRecord(int id)
+        {
+            var record = await _context.MemberDailyHealthRecords.FindAsync(id);
+            if (record == null)
+                return NotFound(new { message = "找不到資料" });
+
+
+            _context.MemberDailyHealthRecords.Remove(record);
+            await _context.SaveChangesAsync();
+
+
+            return Ok(new { message = "資料已刪除" });
         }
     }
 }
