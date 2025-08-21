@@ -83,6 +83,113 @@ namespace prjFinalProjectApi.Controllers
             return StatusCode(500, new { message = "未知錯誤" });
         }
 
+        //顯示全部的報名資料
+        [HttpGet("list")]
+        public async Task<IActionResult> List()
+        {
+            var items = await (
+                from r in _db.RegistrationDetails.AsNoTracking()//減少記憶體負擔
+                join b in _db.EventBatches.AsNoTracking()
+                    on r.EventBatchId equals b.BatchId
+                join e in _db.EventTemplates.AsNoTracking()
+                    on b.EventId equals e.EventId
+                orderby r.RegistrationId
+                select new RegistrationListDto
+                {
+                    RegistrationId = r.RegistrationId,
+                    RegistrationNum = r.RegistrationNum,
+                    EventBatchId = r.EventBatchId,
+                    MemberId = r.MemberId,
+                    AmountDue = r.AmountDue,
+                    RegistrationDateTime = r.RegistrationDateTime,
+                    CurrentStatus = r.CurrentStatus,
+                    InternalRemarks = r.InternalRemarks,
+                    EventName = e.EventName,   //活動名稱
+                    EventDateTimeStart=b.EventDateTimeStart,//活動時間
+                    EventLocation=e.EventLocation, //活動地點
+                }
+            ).ToListAsync();
+
+            return Ok(items);
+        }
+
+        //// 顯示指定會員的報名資料
+        //// GET /api/EventRegistration/memberid/{memberId}
+        //[HttpGet("memberId/{memberId:int}")]
+        //public async Task<IActionResult> List(int memberId)
+        //{
+        //    var query = from r in _db.RegistrationDetails.AsNoTracking()
+        //                join b in _db.EventBatches.AsNoTracking()
+        //                    on r.EventBatchId equals b.BatchId
+        //                join e in _db.EventTemplates.AsNoTracking()
+        //                    on b.EventId equals e.EventId
+        //                where r.MemberId == memberId     
+        //                orderby r.RegistrationId
+        //                select new RegistrationListDto
+        //                {
+        //                    RegistrationId = r.RegistrationId,
+        //                    RegistrationNum = r.RegistrationNum,
+        //                    EventBatchId = r.EventBatchId,
+        //                    MemberId = r.MemberId,
+        //                    AmountDue = r.AmountDue,
+        //                    RegistrationDateTime = r.RegistrationDateTime,
+        //                    CurrentStatus = r.CurrentStatus,
+        //                    InternalRemarks = r.InternalRemarks,
+        //                    EventName = e.EventName,               // 活動名稱
+        //                    EventDateTimeStart = b.EventDateTimeStart, // 活動時間
+        //                    EventLocation = e.EventLocation         // 活動地點
+        //                };
+
+        //    var items = await query.ToListAsync();
+        //    return Ok(items);
+        //}
+
+        // 顯示報名資料 (需給予使用者id，可選批次id與狀態)
+        [HttpGet("memberId/{memberId:int}")]
+        public async Task<IActionResult> List(
+            int memberId,
+            [FromQuery] int? batchId = null,
+            [FromQuery] int? status = null   // ✅ 新增：狀態參數
+        )
+        {
+            var query = from r in _db.RegistrationDetails.AsNoTracking()
+                        join b in _db.EventBatches.AsNoTracking()
+                            on r.EventBatchId equals b.BatchId
+                        join e in _db.EventTemplates.AsNoTracking()
+                            on b.EventId equals e.EventId
+                        where r.MemberId == memberId
+                        orderby r.RegistrationId
+                        select new RegistrationListDto
+                        {
+                            RegistrationId = r.RegistrationId,
+                            RegistrationNum = r.RegistrationNum,
+                            EventBatchId = r.EventBatchId,
+                            MemberId = r.MemberId,
+                            AmountDue = r.AmountDue,
+                            RegistrationDateTime = r.RegistrationDateTime,
+                            CurrentStatus = r.CurrentStatus,
+                            InternalRemarks = r.InternalRemarks,
+                            EventName = e.EventName,                   // 活動名稱
+                            EventDateTimeStart = b.EventDateTimeStart, // 活動時間
+                            EventLocation = e.EventLocation            // 活動地點
+                        };
+
+            // ✅ 批次篩選
+            if (batchId.HasValue)
+                query = query.Where(x => x.EventBatchId == batchId.Value);
+
+            // ✅ 狀態篩選
+            if (status.HasValue)
+                query = query.Where(x => x.CurrentStatus == status.Value);
+
+            var items = await query.ToListAsync();
+
+            // ✅ 判斷是否有資料
+            if (!items.Any())
+                return NotFound($"查無會員 {memberId} 的報名資料 (批次={batchId?.ToString() ?? "全部"}, 狀態={status?.ToString() ?? "全部"})");
+
+            return Ok(items);
+        }
 
     }
 }

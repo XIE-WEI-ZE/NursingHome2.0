@@ -48,6 +48,7 @@ namespace prjFinalProjectApi.Controllers
 
             return Ok(new
             {
+                memberId = member.FMemberId,
                 username = member.FAccount,
                 name = member.FName,
                 email = member.FEmail,
