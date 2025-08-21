@@ -125,7 +125,8 @@ namespace prjFinalProjectApi.Controllers
             {
                 message = "登入成功",
                 token,
-                memberId = member.FMemberId
+                memberId = member.FMemberId,
+                name = member.FName
             });
         }
 
@@ -253,7 +254,8 @@ namespace prjFinalProjectApi.Controllers
                 {
                     token,
                     message = "Google 登入成功",
-                    memberId = member.FMemberId
+                    memberId = member.FMemberId,
+                    name = member.FName
                 });
             }
             catch (Exception ex)
