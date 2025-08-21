@@ -91,7 +91,16 @@ app.UseSwaggerUI();
 
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
-app.UseStaticFiles();      // wwwroot
+app.UseStaticFiles(new StaticFileOptions     // wwwroot
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*"); // 允許所有來源
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET"); // 只允許 GET
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type");
+    }
+});
+app.UseRouting(); // 添加路由，確保 CORS 生效
 app.UseAuthentication();   // 先驗證
 app.UseAuthorization();    // 再授權
 app.MapControllers();
