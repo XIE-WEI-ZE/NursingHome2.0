@@ -16,4 +16,6 @@ public partial class CommunityBoard
     public DateTime CreatedAt { get; set; }
 
     public string BoardStatus { get; set; } = null!;
+
+    public string? BoardUrl { get; set; }
 }
