@@ -133,5 +133,45 @@ namespace prjFinalProjectApi.Controllers
 
             return Ok(photos);
         }
+
+        // 相關商品（同分類、排除自己）
+        // GET: /api/ShopProducts/{slug}/related?limit=8
+        [HttpGet("{slug}/related")]
+        public async Task<ActionResult<IEnumerable<ShopProductListDto>>> GetRelatedProducts(string slug, [FromQuery] int limit = 8)
+        {
+            // 先找到目前商品，取其 CategoryId
+            var baseProduct = await _context.ShopProducts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Slug == slug && !p.Discontinued);
+
+            if (baseProduct == null) return NotFound();
+
+            var categoryId = baseProduct.CategoryId;
+
+            // 撈同分類、排除自己
+            var related = await _context.ShopProducts
+                .AsNoTracking()
+                .Include(p => p.Category)
+                .Where(p => !p.Discontinued &&
+                            p.ProductId != baseProduct.ProductId &&
+                            p.CategoryId == categoryId)
+                .OrderByDescending(p => p.ProductId) // 你也可改成熱門/隨機
+                .Take(limit)
+                .Select(p => new ShopProductListDto
+                {
+                    ProductID = p.ProductId,
+                    ProductName = p.ProductName,
+                    OriginalPrice = p.OriginalPrice,
+                    SalePrice = p.SalePrice,
+                    ThumbnailPhotoPath = $"{Request.Scheme}://{Request.Host}{p.ThumbnailPhotoPath}",
+                    CategoryID = p.CategoryId ?? 0,
+                    CategoryName = p.Category != null ? p.Category.CategoryName : "",
+                    Slug = p.Slug
+                })
+                .ToListAsync();
+
+            return Ok(related);
+        }
+
     }
 }
