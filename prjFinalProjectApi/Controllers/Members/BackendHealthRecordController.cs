@@ -67,6 +67,7 @@ namespace prjFinalProjectApi.Controllers.Backend
                 .OrderByDescending(r => r.FRecordDate)
                 .Select(r => new
                 {
+                    Id = r.FId,
                     RecordDate = r.FRecordDate.HasValue
                     ? r.FRecordDate.Value.ToDateTime(TimeOnly.MinValue).ToString("yyyy-MM-dd")
                     : null,
@@ -123,5 +124,95 @@ namespace prjFinalProjectApi.Controllers.Backend
 
             return Ok(new { message = "資料已刪除" });
         }
+
+        // GET: /api/backend/health-record/list?memberId=7&page=1&pageSize=10&dateFrom=2025-08-01&dateTo=2025-08-31
+        [HttpGet("list")]
+        public async Task<IActionResult> List(
+            [FromQuery] int memberId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string? dateFrom = null,
+            [FromQuery] string? dateTo = null)
+        {
+            if (memberId <= 0) return BadRequest(new { message = "memberId 必填" });
+
+            var q = _context.MemberDailyHealthRecords.AsQueryable()
+                .Where(r => r.FMemberId == memberId);
+
+            // 日期區間（可選）
+            if (!string.IsNullOrWhiteSpace(dateFrom) && DateOnly.TryParse(dateFrom, out var df))
+                q = q.Where(r => r.FRecordDate >= df);
+
+            if (!string.IsNullOrWhiteSpace(dateTo) && DateOnly.TryParse(dateTo, out var dt))
+                q = q.Where(r => r.FRecordDate <= dt);
+
+            var totalCount = await q.CountAsync();
+
+            var items = await q
+                .OrderByDescending(r => r.FRecordDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(r => new
+                {
+                    id = r.FId,
+                    recordDate = r.FRecordDate.HasValue
+                        ? r.FRecordDate.Value.ToDateTime(TimeOnly.MinValue).ToString("yyyy-MM-dd")
+                        : null,
+                    systolic = r.FSystolic,
+                    diastolic = r.FDiastolic,
+                    pulse = r.FPulse,
+                    ioRecord = r.FIorecord,
+                    checkPeriod = r.FCheckPeriod,
+                    notes = r.FNotes
+                })
+                .ToListAsync();
+
+            return Ok(new { totalCount, page, pageSize, items });
+        }
+
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetOne(int id)
+        {
+            var r = await _context.MemberDailyHealthRecords
+                .FirstOrDefaultAsync(x => x.FId == id);
+            if (r == null) return NotFound(new { message = "查無資料" });
+
+            return Ok(new
+            {
+                id = r.FId,
+                recordDate = r.FRecordDate?.ToDateTime(TimeOnly.MinValue).ToString("yyyy-MM-dd"),
+                systolic = r.FSystolic,
+                diastolic = r.FDiastolic,
+                pulse = r.FPulse,
+                ioRecord = r.FIorecord,
+                checkPeriod = r.FCheckPeriod,
+                notes = r.FNotes
+            });
+        }
+
+        [HttpGet("by-member/{memberId:int}/by-date/{date}")]
+        public async Task<IActionResult> GetByMemberAndDate(int memberId, string date)
+        {
+            if (!DateOnly.TryParse(date, out var d))
+                return BadRequest(new { message = "日期格式需 yyyy-MM-dd" });
+
+            var r = await _context.MemberDailyHealthRecords
+                .FirstOrDefaultAsync(x => x.FMemberId == memberId && x.FRecordDate == d);
+
+            if (r == null) return NotFound(new { message = "當日無紀錄" });
+
+            return Ok(new
+            {
+                id = r.FId,
+                recordDate = r.FRecordDate?.ToDateTime(TimeOnly.MinValue).ToString("yyyy-MM-dd"),
+                systolic = r.FSystolic,
+                diastolic = r.FDiastolic,
+                pulse = r.FPulse,
+                ioRecord = r.FIorecord,
+                checkPeriod = r.FCheckPeriod,
+                notes = r.FNotes
+            });
+        }
+
     }
 }

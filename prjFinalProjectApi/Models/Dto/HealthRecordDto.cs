@@ -2,6 +2,7 @@
 {
     public class HealthRecordDto
     {
+        public int Id { get; set; }
         public DateTime? RecordDate { get; set; }     
         public int? Systolic { get; set; }            
         public int? Diastolic { get; set; }
