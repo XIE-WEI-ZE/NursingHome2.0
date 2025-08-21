@@ -27,10 +27,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Models\Dto\" />
+    <Folder Include="wwwroot\images\community\board\" />
+    <Folder Include="wwwroot\images\community\post\" />
     <Folder Include="wwwroot\images\members\" />
     <Folder Include="wwwroot\images\events\" />
-    <Folder Include="wwwroot\images\community\" />
     <Folder Include="wwwroot\images\employees\" />
     <Folder Include="wwwroot\images\shops\ShopProductThumb\" />
     <Folder Include="wwwroot\images\shops\ShopProductLarge\" />
