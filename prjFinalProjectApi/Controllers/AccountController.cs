@@ -10,7 +10,6 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-
 namespace prjFinalProjectApi.Controllers
 {
     [Route("api/[controller]")]
@@ -22,16 +21,20 @@ namespace prjFinalProjectApi.Controllers
         private readonly IConfiguration _config;
         private readonly OneTimeTokenHelper _ott;
 
+        //  連錯門檻與鎖定秒數（可調）
+        private const int MAX_FAILED_ATTEMPTS = 5;
+        private const int LOCK_SECONDS = 10;
+
         public AccountController(
             DbNursingHomeContext context,
             IWebHostEnvironment env,
             IConfiguration config,
-            OneTimeTokenHelper ott)                  
+            OneTimeTokenHelper ott)
         {
             _context = context;
             _env = env;
             _config = config;
-            _ott = ott;                              
+            _ott = ott;
         }
 
         [HttpPost("register")]
@@ -87,15 +90,39 @@ namespace prjFinalProjectApi.Controllers
 
             if (member == null)
             {
-                //  帳號不存在紀錄
                 LogSecurityEvent(null, "LoginFailed", $"帳號不存在：{dto.Account}");
                 return Unauthorized(new { message = "帳號不存在" });
             }
 
+            // ★ 先檢查是否在鎖定中（依安全日誌）
+            if (IsLockedOut(member.FMemberId, out int secondsLeft))
+            {
+                LogSecurityEvent(member.FMemberId, "LoginBlocked_LockoutHit", $"剩餘 {secondsLeft} 秒");
+                return StatusCode(429, new { message = $"嘗試過多，請 {secondsLeft} 秒後再試" });
+            }
+
+            // ★ 停權不可登入（bool? 安全處理）
+            if (!member.FAccountStatus.GetValueOrDefault())
+            {
+                LogSecurityEvent(member.FMemberId, "LoginBlocked_Disabled", "帳號已停權");
+                return Unauthorized(new { message = "帳號已停權，請聯絡管理員" });
+            }
+
             if (!VerifyPassword(dto.Password, member.FPasswordHash, member.FPasswordSalt))
             {
-                //  密碼錯誤紀錄
+                // 先記一筆失敗
                 LogSecurityEvent(member.FMemberId, "LoginFailed", "密碼錯誤");
+
+                // ★ 計算「連續」失敗次數（從最近一筆往回，遇到成功/鎖定就停止）
+                var fails = CountConsecutiveFailures(member.FMemberId);
+
+                // ★ 達門檻 → 觸發鎖定 LOG，並回 429（Too Many Requests）
+                if (fails >= MAX_FAILED_ATTEMPTS)
+                {
+                    await StartLockoutAsync(member.FMemberId);
+                    return StatusCode(429, new { message = $"嘗試過多，請 {LOCK_SECONDS} 秒後再試" });
+                }
+
                 return Unauthorized(new { message = "密碼錯誤" });
             }
 
@@ -110,15 +137,14 @@ namespace prjFinalProjectApi.Controllers
                 60
             );
 
-
-            //  登入成功紀錄
+            //  登入成功紀錄（成功會讓後續的「連續失敗」鏈條中斷）
             LogSecurityEvent(member.FMemberId, "LoginSuccess", "登入成功");
 
             await SendEmailAsync(
-            member.FEmail!,
-            "登入成功通知",
-            $"<h3>親愛的 {member.FName}，您好！</h3><p>您已於 {DateTime.Now:yyyy/MM/dd HH:mm:ss} 成功登入系統。</p>" +
-            $" <p>若非您本人操作，請立即聯絡系統管理員。</p>\n  <hr/>\n  <small>本信件為系統自動通知，請勿回覆</small>"
+                member.FEmail!,
+                "登入成功通知",
+                $"<h3>親愛的 {member.FName}，您好！</h3><p>您已於 {DateTime.Now:yyyy/MM/dd HH:mm:ss} 成功登入系統。</p>" +
+                $" <p>若非您本人操作，請立即聯絡系統管理員。</p>\n  <hr/>\n  <small>本信件為系統自動通知，請勿回覆</small>"
             );
 
             return Ok(new
@@ -129,8 +155,6 @@ namespace prjFinalProjectApi.Controllers
                 name = member.FName
             });
         }
-
-
 
         // 產生隨機鹽
         private static byte[] GenerateSalt(int size = 16)
@@ -169,7 +193,6 @@ namespace prjFinalProjectApi.Controllers
             var member = _context.Members.FirstOrDefault(m => m.FAccount == account);
             if (member != null)
             {
-                //  登出紀錄
                 LogSecurityEvent(member.FMemberId, "Logout", "使用者登出");
             }
 
@@ -188,12 +211,10 @@ namespace prjFinalProjectApi.Controllers
                 var name = payload.Name;
                 var externalId = payload.Subject;
 
-                // 找出同 email 的帳號，不管是用哪種方式註冊
                 var member = await _context.Members.FirstOrDefaultAsync(m => m.FEmail == email);
 
                 if (member == null)
                 {
-                    //  完全新帳號，建立 Google 帳號
                     member = new Member
                     {
                         FEmail = email,
@@ -210,8 +231,6 @@ namespace prjFinalProjectApi.Controllers
                 }
                 else
                 {
-                    //  已經有帳號存在
-                    //  更新登入方式為 Google（讓他下次可用 Google 直接登入）
                     if (string.IsNullOrEmpty(member.FLoginProvider))
                     {
                         member.FLoginProvider = "Google";
@@ -220,7 +239,10 @@ namespace prjFinalProjectApi.Controllers
                     }
                 }
 
-                // 登入成功，產生 JWT Token
+                // ★ 停權檢查（第三方也要擋）
+                if (!await IsMemberActiveAsync(member))
+                    return Unauthorized(new { message = "帳號已停權，請聯絡管理員" });
+
                 var token = JwtHelper.GenerateToken(
                     member.FMemberId,
                     member.FAccount,
@@ -231,7 +253,6 @@ namespace prjFinalProjectApi.Controllers
                     60
                 );
 
-                //  登入成功紀錄
                 await LogSecurityEvent(member.FMemberId, "LoginSuccess", "Google 登入成功（帳號整合）");
 
                 var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -270,10 +291,6 @@ namespace prjFinalProjectApi.Controllers
             }
         }
 
-
-
-
-
         private async Task LogSecurityEvent(int? memberId, string eventType, string? notes)
         {
             try
@@ -290,7 +307,6 @@ namespace prjFinalProjectApi.Controllers
                 ip = string.IsNullOrEmpty(ip) ? null :
                      ip.Length > 200 ? ip.Substring(0, 200) : ip;
 
-                // 每次 Log 時自己 new 一個新的 context
                 using var db = new DbNursingHomeContext();
                 var log = new MemberSecurityLog
                 {
@@ -309,9 +325,6 @@ namespace prjFinalProjectApi.Controllers
                 Console.WriteLine($"LogSecurityEvent 錯誤 : {ex.Message}");
             }
         }
-
-
-
 
         [HttpGet("security-logs")]
         [Authorize]
@@ -392,10 +405,8 @@ namespace prjFinalProjectApi.Controllers
             if (member == null)
                 return BadRequest(new { message = "查無此 Email" });
 
-            //  產生一次性 Token（PasswordReset）
             string token = _ott.CreateToken("PasswordReset", member.FMemberId, minutes: 30);
 
-            //  寄出的連結帶 token，不再帶 email
             string resetLink = $"http://localhost:4200/show/reset-password?token={Uri.EscapeDataString(token)}";
 
             string subject = "重設密碼通知";
@@ -409,11 +420,9 @@ namespace prjFinalProjectApi.Controllers
             return Ok(new { message = "密碼重設連結已寄出，請查收您的信箱。" });
         }
 
-
         [HttpPost("reset-password")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
         {
-            //  透過 token 驗證與取得 memberId
             if (string.IsNullOrWhiteSpace(dto.Token))
                 return BadRequest(new { message = "缺少驗證資訊" });
 
@@ -428,7 +437,6 @@ namespace prjFinalProjectApi.Controllers
             if (member == null)
                 return NotFound(new { message = "會員不存在" });
 
-            // 更新密碼
             byte[] salt = GenerateSalt();
             string hashedPassword = HashPassword(dto.NewPassword, salt);
 
@@ -439,6 +447,76 @@ namespace prjFinalProjectApi.Controllers
             return Ok(new { message = "密碼已成功重設" });
         }
 
+        private async Task<bool> IsMemberActiveAsync(Member member)
+        {
+            if (member == null) return false;
+            if (member.FAccountStatus.GetValueOrDefault()) return true;
 
+            await LogSecurityEvent(member.FMemberId, "LoginBlocked_Disabled", "帳號已停權");
+            return false;
+        }
+
+        // ================== 鎖定機制（利用安全日誌） ==================
+
+        // 是否仍在鎖定期：找最近一次觸發鎖定的時間，若未滿 LOCK_SECONDS 則仍鎖
+        private bool IsLockedOut(int memberId, out int secondsLeft)
+        {
+            secondsLeft = 0;
+
+            var lastBlock = _context.MemberSecurityLogs
+                .Where(x => x.FMemberId == memberId
+                         && x.FEventType == "LoginBlocked_Lockout"
+                         && x.FCreatedAt != null)              // 先確保有時間
+                .OrderByDescending(x => x.FCreatedAt)
+                .FirstOrDefault();
+
+            if (lastBlock == null) return false;
+            if (!lastBlock.FCreatedAt.HasValue) return false;   // 可為 null 要擋
+
+            var createdAt = lastBlock.FCreatedAt.Value;         // 轉成 DateTime
+            var until = createdAt.AddSeconds(LOCK_SECONDS);
+            var now = DateTime.Now;
+
+            if (until > now)
+            {
+                secondsLeft = (int)Math.Ceiling((until - now).TotalSeconds);
+                return true;
+            }
+            return false;
+        }
+
+        // 計算「連續」失敗：從最近往回掃，遇到成功或鎖定事件即停止
+        private int CountConsecutiveFailures(int memberId)
+        {
+            var logs = _context.MemberSecurityLogs
+                .Where(x => x.FMemberId == memberId &&
+                            (x.FEventType == "LoginFailed" ||
+                             x.FEventType == "LoginSuccess" ||
+                             x.FEventType == "LoginBlocked_Lockout"))
+                .OrderByDescending(x => x.FCreatedAt)
+                .Take(MAX_FAILED_ATTEMPTS + 10) // 多抓幾筆以免不夠
+                .ToList();
+
+            int count = 0;
+            foreach (var log in logs)
+            {
+                if (log.FEventType == "LoginFailed")
+                {
+                    count++;
+                    if (count >= MAX_FAILED_ATTEMPTS) break;
+                }
+                else
+                {
+                    break; 
+                }
+            }
+            return count;
+        }
+
+        // 觸發鎖定：寫入一筆鎖定事件（有效期由 IsLockedOut 計算）
+        private async Task StartLockoutAsync(int memberId)
+        {
+            await LogSecurityEvent(memberId, "LoginBlocked_Lockout", $"連續失敗 {MAX_FAILED_ATTEMPTS} 次，鎖定 {LOCK_SECONDS} 秒");
+        }
     }
 }
