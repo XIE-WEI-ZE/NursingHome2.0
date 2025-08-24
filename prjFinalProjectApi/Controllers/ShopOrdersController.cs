@@ -31,6 +31,7 @@ namespace prjFinalProjectApi.Controllers
 
             var order = new ShopOrder
             {
+                FMemberId = dto.MemberId,
                 BuyerName = dto.BuyerName,
                 ReceiverName = dto.ReceiverName,
                 ReceiverPhone = dto.ReceiverPhone,

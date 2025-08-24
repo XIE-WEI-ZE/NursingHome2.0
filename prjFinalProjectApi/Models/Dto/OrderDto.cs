@@ -4,6 +4,7 @@ namespace prjFinalProjectApi.Models.Dto
 {
     public class OrderDto
     {
+        public int MemberId { get; set; }
         [Required(ErrorMessage = "訂購人姓名必填")]
         public string BuyerName { get; set; } = string.Empty;
 
