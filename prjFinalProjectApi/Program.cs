@@ -53,6 +53,9 @@ builder.Services.AddSwaggerGen(c =>
 var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
 builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
 
+// Line 登入
+builder.Services.AddHttpClient();
+
 //  綁定 Jwt 強型別設定 + 啟動期檢查
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()

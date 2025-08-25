@@ -9,6 +9,8 @@ using prjFinalProjectApi.Models.Dtos;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Net.Http;
+using System.Text;
 
 namespace prjFinalProjectApi.Controllers
 {
@@ -21,7 +23,7 @@ namespace prjFinalProjectApi.Controllers
         private readonly IConfiguration _config;
         private readonly OneTimeTokenHelper _ott;
 
-        //  連錯門檻與鎖定秒數（可調）
+        
         private const int MAX_FAILED_ATTEMPTS = 5;
         private const int LOCK_SECONDS = 10;
 
@@ -40,15 +42,27 @@ namespace prjFinalProjectApi.Controllers
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromForm] RegisterDto dto)
         {
-            if (await _context.Members.AnyAsync(m => m.FAccount == dto.Account))
+            // 1) 正規化
+            var account = (dto.Account ?? string.Empty).Trim();
+            var email = (dto.Email ?? string.Empty).Trim().ToLowerInvariant(); 
+            var name = (dto.Name ?? string.Empty).Trim();
+
+            // 2) 基本檢核
+            if (string.IsNullOrEmpty(account)) return BadRequest("帳號不可為空");
+            if (string.IsNullOrEmpty(email)) return BadRequest("Email 不可為空");
+            if (dto.Password != dto.ConfirmPassword) return BadRequest("密碼不一致");
+
+            // 3) 程式層查重（帳號 & Email）
+            if (await _context.Members.AnyAsync(m => m.FAccount == account))
                 return BadRequest("帳號已存在");
+            if (await _context.Members.AnyAsync(m => m.FEmail != null && m.FEmail.ToLower() == email))
+                return BadRequest("Email 已被使用");
 
-            if (dto.Password != dto.ConfirmPassword)
-                return BadRequest("密碼不一致");
-
+            // 4) 雜湊
             byte[] salt = GenerateSalt();
             string hashedPassword = HashPassword(dto.Password, salt);
 
+            // 5) 上傳頭像
             string? fileName = null;
             if (dto.Photo != null)
             {
@@ -57,31 +71,43 @@ namespace prjFinalProjectApi.Controllers
 
                 fileName = $"{Guid.NewGuid()}{Path.GetExtension(dto.Photo.FileName)}";
                 string filePath = Path.Combine(uploadPath, fileName);
-
                 using var fileStream = new FileStream(filePath, FileMode.Create);
                 await dto.Photo.CopyToAsync(fileStream);
+
+                // 建議存相對路徑，和你 MemberController/me 的邏輯一致
+                fileName = $"images/members/{fileName}";
             }
 
+            // 6) 寫入
             var member = new Member
             {
-                FAccount = dto.Account,
+                FAccount = account,
                 FPasswordHash = hashedPassword,
                 FPasswordSalt = Convert.ToBase64String(salt),
-                FEmail = dto.Email,
-                FName = dto.Name,
+                FEmail = email,
+                FName = name,
                 FGender = dto.Gender,
                 FPhone = dto.Phone,
                 FBirthDate = dto.BirthDate != null ? DateOnly.FromDateTime(dto.BirthDate.Value) : null,
-                FProfilePictureUrl = fileName,
+                FProfilePictureUrl = fileName,          
                 FAccountStatus = true,
                 FCreatedAt = DateTime.Now
             };
 
             _context.Members.Add(member);
-            await _context.SaveChangesAsync();
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return BadRequest("帳號或 Email 已被使用");
+            }
 
             return Ok(new { message = "註冊成功" });
         }
+
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
@@ -94,14 +120,14 @@ namespace prjFinalProjectApi.Controllers
                 return Unauthorized(new { message = "帳號不存在" });
             }
 
-            // ★ 先檢查是否在鎖定中（依安全日誌）
+            //  先檢查是否在鎖定中（依安全日誌）
             if (IsLockedOut(member.FMemberId, out int secondsLeft))
             {
                 LogSecurityEvent(member.FMemberId, "LoginBlocked_LockoutHit", $"剩餘 {secondsLeft} 秒");
                 return StatusCode(429, new { message = $"嘗試過多，請 {secondsLeft} 秒後再試" });
             }
 
-            // ★ 停權不可登入（bool? 安全處理）
+            //  停權不可登入（bool? 安全處理）
             if (!member.FAccountStatus.GetValueOrDefault())
             {
                 LogSecurityEvent(member.FMemberId, "LoginBlocked_Disabled", "帳號已停權");
@@ -110,13 +136,13 @@ namespace prjFinalProjectApi.Controllers
 
             if (!VerifyPassword(dto.Password, member.FPasswordHash, member.FPasswordSalt))
             {
-                // 先記一筆失敗
+                
                 LogSecurityEvent(member.FMemberId, "LoginFailed", "密碼錯誤");
 
-                // ★ 計算「連續」失敗次數（從最近一筆往回，遇到成功/鎖定就停止）
+                
                 var fails = CountConsecutiveFailures(member.FMemberId);
 
-                // ★ 達門檻 → 觸發鎖定 LOG，並回 429（Too Many Requests）
+                
                 if (fails >= MAX_FAILED_ATTEMPTS)
                 {
                     await StartLockoutAsync(member.FMemberId);
@@ -137,7 +163,7 @@ namespace prjFinalProjectApi.Controllers
                 60
             );
 
-            //  登入成功紀錄（成功會讓後續的「連續失敗」鏈條中斷）
+            
             LogSecurityEvent(member.FMemberId, "LoginSuccess", "登入成功");
 
             await SendEmailAsync(
@@ -239,7 +265,7 @@ namespace prjFinalProjectApi.Controllers
                     }
                 }
 
-                // ★ 停權檢查（第三方也要擋）
+                //  停權檢查（第三方也要擋）
                 if (!await IsMemberActiveAsync(member))
                     return Unauthorized(new { message = "帳號已停權，請聯絡管理員" });
 
@@ -290,6 +316,151 @@ namespace prjFinalProjectApi.Controllers
                 });
             }
         }
+
+        [HttpPost("line-exchange-code")]
+        public async Task<IActionResult> LineExchangeCode([FromBody] JsonElement json, [FromServices] IHttpClientFactory httpFactory)
+        {
+            try
+            {
+                string code = null;
+                if (json.ValueKind == JsonValueKind.String)
+                    code = json.GetString();
+                else if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("code", out var codeProp))
+                    code = codeProp.GetString();
+
+                if (string.IsNullOrWhiteSpace(code))
+                    return BadRequest(new { message = "缺少授權碼 code" });
+
+                var channelId = _config["Authentication:Line:ChannelId"];
+                var channelSecret = _config["Authentication:Line:ChannelSecret"];
+                var redirectUri = _config["Authentication:Line:RedirectUri"];
+                if (string.IsNullOrWhiteSpace(channelId) || string.IsNullOrWhiteSpace(channelSecret) || string.IsNullOrWhiteSpace(redirectUri))
+                    return StatusCode(500, new { message = "LINE 設定缺失" });
+
+                var client = httpFactory.CreateClient();
+                var tokenForm = new List<KeyValuePair<string, string>>
+        {
+            new("grant_type", "authorization_code"),
+            new("code", code),
+            new("redirect_uri", redirectUri),
+            new("client_id", channelId),
+            new("client_secret", channelSecret)
+        };
+
+                using var tokenResp = await client.PostAsync("https://api.line.me/oauth2/v2.1/token", new FormUrlEncodedContent(tokenForm));
+                var tokenJson = await tokenResp.Content.ReadAsStringAsync();
+                Console.WriteLine("[LINE] Token API 回應：" + tokenJson);
+
+                if (!tokenResp.IsSuccessStatusCode)
+                    return BadRequest(new { message = "LINE token 交換失敗", raw = tokenJson });
+
+                using var tokenDoc = JsonDocument.Parse(tokenJson);
+                var idToken = tokenDoc.RootElement.TryGetProperty("id_token", out var idEl) ? idEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(idToken))
+                    return BadRequest(new { message = "未取得 id_token，請在 LINE 後台勾選 openid scope" });
+
+                var verifyForm = new List<KeyValuePair<string, string>>
+        {
+            new("id_token", idToken!),
+            new("client_id", channelId!)
+        };
+                using var verifyResp = await client.PostAsync("https://api.line.me/oauth2/v2.1/verify", new FormUrlEncodedContent(verifyForm));
+                var verifyJson = await verifyResp.Content.ReadAsStringAsync();
+                
+
+                if (!verifyResp.IsSuccessStatusCode)
+                    return Unauthorized(new { message = "id_token 驗證失敗", raw = verifyJson });
+
+                using var vDoc = JsonDocument.Parse(verifyJson);
+                var sub = vDoc.RootElement.TryGetProperty("sub", out var sEl) ? sEl.GetString() : null;
+                var name = vDoc.RootElement.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
+                var email = vDoc.RootElement.TryGetProperty("email", out var eEl) ? eEl.GetString() : null;
+
+                
+
+                Member member = null;
+
+                if (!string.IsNullOrWhiteSpace(email))
+                    member = await _context.Members.FirstOrDefaultAsync(m => m.FEmail == email);
+
+                if (member == null && !string.IsNullOrWhiteSpace(sub))
+                    member = await _context.Members.FirstOrDefaultAsync(m => m.FLoginProvider == "LINE" && m.FExternalId == sub);
+
+                
+
+                if (member == null)
+                {
+                    member = new Member
+                    {
+                        FEmail = email,
+                        FName = string.IsNullOrWhiteSpace(name) ? "LINE用戶" : name,
+                        FLoginProvider = "LINE",
+                        FExternalId = sub,
+                        FAccount = "line_" + Guid.NewGuid().ToString("N").Substring(0, 10),
+                        FAccountStatus = true,
+                        FCreatedAt = DateTime.Now
+                    };
+                    _context.Members.Add(member);
+                    await _context.SaveChangesAsync();
+                    
+                }
+                else
+                {
+                    bool touched = false;
+                    if (string.IsNullOrEmpty(member.FLoginProvider))
+                    {
+                        member.FLoginProvider = "LINE";
+                        touched = true;
+                    }
+                    if (string.IsNullOrEmpty(member.FExternalId) && !string.IsNullOrWhiteSpace(sub))
+                    {
+                        member.FExternalId = sub;
+                        touched = true;
+                    }
+                    if (touched)
+                    {
+                        await _context.SaveChangesAsync();
+                        
+                    }
+                }
+
+                if (!await IsMemberActiveAsync(member))
+                {
+                    //Console.WriteLine("[LINE] 該帳號已停權");
+                    return Unauthorized(new { message = "帳號已停權，請聯絡管理員" });
+                }
+
+                var token = JwtHelper.GenerateToken(
+                    member.FMemberId,
+                    member.FAccount,
+                    member.FEmail ?? "",
+                    _config["Jwt:Key"],
+                    _config["Jwt:Issuer"],
+                    _config["Jwt:Audience"]
+                );
+
+                await LogSecurityEvent(member.FMemberId, "LoginSuccess", "LINE 登入成功");
+
+                Console.WriteLine("[LINE] 登入成功，JWT 已簽發");
+
+                return Ok(new
+                {
+                    token,
+                    message = "LINE 登入成功",
+                    memberId = member.FMemberId,
+                    name = member.FName
+                });
+            }
+            catch (Exception ex)
+            {
+                //Console.WriteLine("[LINE] 登入失敗：" + ex.ToString());
+                await LogSecurityEvent(null, "LoginFailed", $"LINE 登入失敗：{ex.Message}");
+                return BadRequest(new { message = "LINE 登入失敗", error = ex.Message });
+            }
+        }
+
+
+
 
         private async Task LogSecurityEvent(int? memberId, string eventType, string? notes)
         {
@@ -466,14 +637,14 @@ namespace prjFinalProjectApi.Controllers
             var lastBlock = _context.MemberSecurityLogs
                 .Where(x => x.FMemberId == memberId
                          && x.FEventType == "LoginBlocked_Lockout"
-                         && x.FCreatedAt != null)              // 先確保有時間
+                         && x.FCreatedAt != null)              
                 .OrderByDescending(x => x.FCreatedAt)
                 .FirstOrDefault();
 
             if (lastBlock == null) return false;
-            if (!lastBlock.FCreatedAt.HasValue) return false;   // 可為 null 要擋
+            if (!lastBlock.FCreatedAt.HasValue) return false;   
 
-            var createdAt = lastBlock.FCreatedAt.Value;         // 轉成 DateTime
+            var createdAt = lastBlock.FCreatedAt.Value;         
             var until = createdAt.AddSeconds(LOCK_SECONDS);
             var now = DateTime.Now;
 

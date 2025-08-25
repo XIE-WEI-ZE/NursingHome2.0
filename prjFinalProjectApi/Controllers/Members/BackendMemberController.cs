@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto.ERP;
 using System.Text.RegularExpressions;
-using System.IO; // 新增 for 檔案處理
+using System.IO; 
 
 namespace prjFinalProjectApi.Controllers.Members
 {
@@ -13,7 +13,7 @@ namespace prjFinalProjectApi.Controllers.Members
     public class BackendMemberController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
-        private readonly IWebHostEnvironment _environment; // 新增 for 檔案儲存
+        private readonly IWebHostEnvironment _environment; 
 
         public BackendMemberController(DbNursingHomeContext context, IWebHostEnvironment environment)
         {
