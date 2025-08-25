@@ -2,8 +2,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Helpers;
+using prjFinalProjectApi.Models;
 using System.Security.Claims;
 using System.Text;
 
@@ -15,11 +15,10 @@ builder.Services.AddCors(o => o.AddPolicy("AllowAll", p =>
 
 builder.Services.AddControllers();
 
-// 3. Swagger
 builder.Services.AddScoped<EmailSender>();
 builder.Services.AddSingleton<OneTimeTokenHelper>();
 
-// Swagger + JWT
+// Swagger + JWT (原設定保留)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -40,20 +39,16 @@ builder.Services.AddSwaggerGen(c =>
           Array.Empty<string>() }
     });
 
-    // 🔹 解決 DTO 名稱重複 (原因1)
     c.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
-
-    // 🔹 解決 DateOnly / TimeOnly 無法序列化 (原因2)
     c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
     c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
-
 });
 
 // EF Core
 var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
 builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
 
-//  綁定 Jwt 強型別設定 + 啟動期檢查
+// JWT
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
           ?? throw new InvalidOperationException("Jwt 設定缺失");
@@ -62,7 +57,6 @@ if (string.IsNullOrWhiteSpace(jwt.Key) ||
     string.IsNullOrWhiteSpace(jwt.Audience))
     throw new InvalidOperationException("Jwt:Key/Issuer/Audience 不可為空");
 
-// JWT 驗證
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -82,26 +76,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-
-
 var app = builder.Build();
 
+// Swagger
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseCors("AllowAll");
 app.UseHttpsRedirection();
-app.UseStaticFiles(new StaticFileOptions     // wwwroot
-{
-    OnPrepareResponse = ctx =>
-    {
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*"); // 允許所有來源
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET"); // 只允許 GET
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type");
-    }
-});
-app.UseRouting(); // 添加路由，確保 CORS 生效
-app.UseAuthentication();   // 先驗證
-app.UseAuthorization();    // 再授權
+
+// 靜態檔：不需要自訂 CORS 標頭，交給全域 CORS 即可
+app.UseStaticFiles();
+
+app.UseRouting();
+
+// ✅ CORS 正確放在 Routing 之後
+app.UseCors("AllowAll");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapControllers();
+
 app.Run();
