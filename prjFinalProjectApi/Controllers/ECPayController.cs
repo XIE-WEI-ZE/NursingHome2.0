@@ -24,35 +24,29 @@ namespace prjFinalProjectApi.Controllers
             dto.MerchantID = _config["ECPay:MerchantID"]!;
             dto.MerchantTradeDate = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss");
             dto.ReturnURL = _config["ECPay:ReturnURL"]!;
-            dto.ClientBackURL = _config["ECPay:ClientBackURL"]!;
 
-            // 符合規範的交易編號 (20碼內, 英數字)
+            // 若前端有帶，就用前端的；否則才用 appsettings 中預設的
+            dto.ClientBackURL = string.IsNullOrWhiteSpace(dto.ClientBackURL)
+                ? _config["ECPay:ClientBackURL"]!
+                : dto.ClientBackURL;
+
             dto.MerchantTradeNo = "T" + DateTime.Now.ToString("yyyyMMddHHmmss");
-
             dto.PaymentType = "aio";
             if (string.IsNullOrEmpty(dto.ChoosePayment))
-                dto.ChoosePayment = "Credit"; // 預設信用卡
+                dto.ChoosePayment = "Credit";
 
-            // 這裡處理 ItemName，把多餘空白清掉
             if (!string.IsNullOrEmpty(dto.ItemName))
             {
-                dto.ItemName = string.Join("#", dto.ItemName.Split('#', StringSplitOptions.RemoveEmptyEntries)
-                .Select(x => x.Replace(" ", "").Trim()));
-
+                dto.ItemName = string.Join("#", dto.ItemName
+                    .Split('#', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => x.Replace(" ", "").Trim()));
             }
 
-            // ⚡ 產生檢查碼
             dto.CheckMacValue = GenerateCheckMacValue(dto);
-
-            // Debug Log
-            Console.WriteLine("=== [ECPay 請求參數] ===");
-            foreach (var prop in dto.GetType().GetProperties())
-            {
-                Console.WriteLine($"{prop.Name}: {prop.GetValue(dto)}");
-            }
 
             return Ok(dto);
         }
+
 
         private string GenerateCheckMacValue(ECPayRequestDto dto)
         {
@@ -123,18 +117,32 @@ namespace prjFinalProjectApi.Controllers
         [HttpPost("Return")]
         public IActionResult PaymentReturn([FromForm] IFormCollection form)
         {
-            Console.WriteLine("=== [ECPay 回傳參數] ===");
-            foreach (var key in form.Keys)
-            {
-                Console.WriteLine($"{key} = {form[key]}");
-            }
+            // 1 取出必要欄位
+            var merchantTradeNo = form["MerchantTradeNo"].ToString();
+            var rtnCode = form["RtnCode"].ToString(); // 1=付款成功
+            var checkMacValue = form["CheckMacValue"].ToString();
 
-            // TODO: 驗證 CheckMacValue、更新資料庫訂單狀態 (改成已付款)
+            // 2 依規則重新產生 CheckMacValue 與 form 內比對 (略) —— 你已有 GenerateCheckMacValue，可重用
 
-            // 綠界規範：一定要回 "1|OK"，否則會一直重送通知
+            // 3 若驗證通過且 rtnCode == "1"：更新 DB 訂單狀態 => Paid
+            // TODO: UpdateOrderStatus(merchantTradeNo, "Paid");
+
+            // 4 綠界要求一定回傳 1|OK
             return Content("1|OK");
         }
 
+
+        [HttpGet("Status")]
+        public IActionResult GetOrderStatus([FromQuery] string merchantTradeNo)
+        {
+            // TODO: 從資料庫查這筆訂單狀態
+            // 例如 var status = _db.Orders.Where(o => o.MerchantTradeNo == merchantTradeNo).Select(o => o.Status).FirstOrDefault();
+
+            // 這裡先示意，請換成實際 DB 結果
+            var status = "Paid"; // or "Created" / "COD" / "Canceled" ...
+
+            return Ok(new { merchantTradeNo, status });
+        }
 
 
 
