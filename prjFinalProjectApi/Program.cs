@@ -6,14 +6,17 @@ using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Helpers;
 using System.Security.Claims;
 using System.Text;
+using prjFinalProjectApi.Services;  //amy
 
 var builder = WebApplication.CreateBuilder(args);
+
 
 // CORS
 builder.Services.AddCors(o => o.AddPolicy("AllowAll", p =>
     p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 builder.Services.AddControllers();
+builder.Services.AddHttpClient<LinePayService>(); //amy
 
 // 3. Swagger
 builder.Services.AddScoped<EmailSender>();

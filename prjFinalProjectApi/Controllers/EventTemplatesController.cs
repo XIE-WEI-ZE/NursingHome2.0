@@ -40,7 +40,8 @@ public class EventTemplatesController : ControllerBase
                 t.LastModifiedBy,
                 t.Subtitle,
                 t.DurationMinutes,
-                t.CoverImageUrl,
+                //t.CoverImageUrl,  //已前端網域抓取(預設的)
+                CoverImageUrl = $"{Request.Scheme}://{Request.Host}{t.CoverImageUrl}",//這樣才會給予後端的
 
 
 
@@ -115,7 +116,7 @@ public class EventTemplatesController : ControllerBase
                 t.LastModifiedBy,
                 t.Subtitle,
                 t.DurationMinutes,
-                t.CoverImageUrl,
+                CoverImageUrl = $"{Request.Scheme}://{Request.Host}{t.CoverImageUrl}",
                 Batches = _db.EventBatches
                     .AsNoTracking()
                     .Where(b => b.EventId == t.EventId)
