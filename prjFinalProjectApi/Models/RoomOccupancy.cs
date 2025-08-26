@@ -7,7 +7,7 @@ public partial class RoomOccupancy
 {
     public int FOccupancyId { get; set; }
 
-    public int? FMemberId { get; set; }
+    public int? FMemberId { get; set; } // 可為 null，若無會員
 
     public int FBedId { get; set; }
 
@@ -22,6 +22,8 @@ public partial class RoomOccupancy
     public string? FPaymentMethod { get; set; }
 
     public bool? FBillingStatus { get; set; }
+
+    public string? FPaypalOrderId { get; set; } // 新增 PayPal 訂單 ID
 
     public virtual RoomBed FBed { get; set; } = null!;
 }
