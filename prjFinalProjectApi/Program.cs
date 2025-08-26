@@ -9,7 +9,7 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// CORS
+// ===== CORS（同來源部署時其實可關；先保留方便工具/Swagger 測試） =====
 builder.Services.AddCors(o => o.AddPolicy("AllowAll", p =>
     p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
@@ -18,11 +18,12 @@ builder.Services.AddControllers();
 builder.Services.AddScoped<EmailSender>();
 builder.Services.AddSingleton<OneTimeTokenHelper>();
 
-// Swagger + JWT (原設定保留)
+// ===== Swagger + JWT =====
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "NursingHome API", Version = "v1" });
+
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -34,23 +35,28 @@ builder.Services.AddSwaggerGen(c =>
     });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
-        { new OpenApiSecurityScheme
-            { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
-          Array.Empty<string>() }
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
     });
 
+    // 讓 DateOnly/TimeOnly 在 Swagger 正確呈現
     c.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
     c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
     c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
 });
 
-// EF Core
+// ===== EF Core =====
 var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
 builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
 
-// JWT
-builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
-var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
+// ===== JWT =====
+builder.Services.Configure<EmployeeJwtOptions>(builder.Configuration.GetSection("Jwt"));
+var jwt = builder.Configuration.GetSection("Jwt").Get<EmployeeJwtOptions>()
           ?? throw new InvalidOperationException("Jwt 設定缺失");
 if (string.IsNullOrWhiteSpace(jwt.Key) ||
     string.IsNullOrWhiteSpace(jwt.Issuer) ||
@@ -78,23 +84,44 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// Swagger
-app.UseSwagger();
-app.UseSwaggerUI();
+// ===== Swagger（僅開發環境）=====
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
+// ===== 強制 HTTPS =====
 app.UseHttpsRedirection();
 
-// 靜態檔：不需要自訂 CORS 標頭，交給全域 CORS 即可
-app.UseStaticFiles();
+// ===== 靜態檔（前端）=====
+// 讓 / 直接回 wwwroot/index.html
+app.UseDefaultFiles();
 
+// 可選：開啟快取（正式環境建議）
+// 若不想快取直接用 app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // 30 天快取
+        const int days = 30;
+        ctx.Context.Response.Headers.CacheControl = $"public,max-age={days * 24 * 60 * 60}";
+    }
+});
+
+// ===== 路由 / CORS / Auth =====
 app.UseRouting();
-
-// ✅ CORS 正確放在 Routing 之後
 app.UseCors("AllowAll");
-
 app.UseAuthentication();
 app.UseAuthorization();
 
+// ===== API 路由 =====
 app.MapControllers();
+
+// ===== SPA Fallback =====
+// 把除了 /api/** 以外的所有路由都交給前端（Angular Router）
+// 注意要放在 MapControllers 後面
+app.MapFallbackToFile("index.html");
 
 app.Run();
