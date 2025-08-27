@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using prjFinalProjectApi.Models;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
 
 namespace prjFinalProjectApi.Controllers
@@ -38,24 +39,38 @@ namespace prjFinalProjectApi.Controllers
         [HttpPost]
         public async Task<ActionResult<CommunityBoard>> CreateBoard([FromForm] CommunityBoardDto boardDto)
         {
-            // 檢查名稱是否已存在
-            if (await _context.CommunityBoards.AnyAsync(b => b.BoardName == boardDto.BoardName))
+            var normalizedName = boardDto.BoardName?.Trim().ToLower();
+
+            // 檢查名稱是否已存在 (避免大小寫/空白差異)
+            if (await _context.CommunityBoards
+                .AnyAsync(b => b.BoardName.Trim().ToLower() == normalizedName))
             {
                 return Conflict(new { message = $"看板名稱 {boardDto.BoardName} 已存在" });
             }
 
             var board = new CommunityBoard
             {
-                BoardName = boardDto.BoardName,
-                BoardDescription = boardDto.BoardDescription,
+                BoardName = boardDto.BoardName.Trim(),
+                BoardDescription = boardDto.BoardDescription?.Trim(),
                 BoardStatus = boardDto.BoardStatus,
                 ModeratorId = boardDto.ModeratorId,
                 CreatedAt = DateTime.Now
             };
 
             _context.CommunityBoards.Add(board);
-            await _context.SaveChangesAsync();
 
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is SqlException sqlEx &&
+                                              (sqlEx.Number == 2627 || sqlEx.Number == 2601))
+            {
+                // 2627 / 2601: UNIQUE KEY 違反
+                return Conflict(new { message = $"看板名稱 {boardDto.BoardName} 已存在 (並發錯誤)" });
+            }
+
+            // 如果有上傳圖片
             if (boardDto.BoardImage != null)
             {
                 var extension = Path.GetExtension(boardDto.BoardImage.FileName);
@@ -69,11 +84,21 @@ namespace prjFinalProjectApi.Controllers
 
                 board.BoardUrl = $"/images/community/board/{fileName}";
                 _context.Entry(board).State = EntityState.Modified;
-                await _context.SaveChangesAsync();
+
+                try
+                {
+                    await _context.SaveChangesAsync();
+                }
+                catch (DbUpdateException ex) when (ex.InnerException is SqlException sqlEx &&
+                                                  (sqlEx.Number == 2627 || sqlEx.Number == 2601))
+                {
+                    return Conflict(new { message = $"圖片儲存時發生唯一鍵衝突" });
+                }
             }
 
             return CreatedAtAction(nameof(GetBoard), new { id = board.BoardId }, board);
         }
+
 
         // 更新看板
         [HttpPut("{id}")]

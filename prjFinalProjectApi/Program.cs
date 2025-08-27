@@ -2,16 +2,25 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Helpers;
+using prjFinalProjectApi.Hubs;
+using prjFinalProjectApi.Models;
+using prjFinalProjectApi.Services;
 using System.Security.Claims;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // CORS
-builder.Services.AddCors(o => o.AddPolicy("AllowAll", p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()
+    );
+});
 
 builder.Services.AddControllers();
 
@@ -53,8 +62,12 @@ builder.Services.AddSwaggerGen(c =>
 var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
 builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
 
+
 // Line 登入
 builder.Services.AddHttpClient();
+
+builder.Services.AddSignalR(); // SignalR
+
 
 //  綁定 Jwt 強型別設定 + 啟動期檢查
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
@@ -84,14 +97,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddHttpClient();
 
-
+// ChatGPT
+builder.Services.AddScoped<IAIService>(sp =>
+    new OllamaService(sp.GetRequiredService<HttpClient>(), "http://192.168.61.90:11434/api/generate"));
 
 var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
 
+app.UseRouting(); // 添加路由，確保 CORS 生效 (先有路由，才能有 CORS)
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
 app.UseStaticFiles(new StaticFileOptions     // wwwroot
@@ -103,8 +120,8 @@ app.UseStaticFiles(new StaticFileOptions     // wwwroot
         ctx.Context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type");
     }
 });
-app.UseRouting(); // 添加路由，確保 CORS 生效
 app.UseAuthentication();   // 先驗證
 app.UseAuthorization();    // 再授權
+app.MapHub<ChatHub>("/chathub"); // SignalR
 app.MapControllers();
 app.Run();
