@@ -22,8 +22,8 @@ namespace prjFinalProjectApi.Controllers
             if (dto.OrderDetails == null || dto.OrderDetails.Count == 0)
                 return BadRequest("訂單明細不可為空");
 
-            // 1) 計算總金額與各項小計
-            int total = 0;
+            // 1) 計算商品小計（以後端重算為準）
+            int itemsTotal = 0;
             var details = new List<ShopOrderDetail>();
 
             foreach (var d in dto.OrderDetails)
@@ -31,7 +31,7 @@ namespace prjFinalProjectApi.Controllers
                 var sub = d.UnitPrice * d.Quantity;
                 if (sub < 0) sub = 0;
 
-                total += sub;
+                itemsTotal += sub;
 
                 details.Add(new ShopOrderDetail
                 {
@@ -39,11 +39,17 @@ namespace prjFinalProjectApi.Controllers
                     ProductName = d.ProductName,
                     Quantity = d.Quantity,
                     UnitPrice = d.UnitPrice,
-                    Subtotal = sub
+                    Subtotal = sub,
+                    Discount = 0
                 });
             }
 
-            // 2) 交易：產生訂單編號、寫入主檔＋明細
+            // 2) 以「前端傳來的 totalAmount（小計+運費）」為主，做防呆
+            //    - 若小於 itemsTotal，則回退為 itemsTotal（避免被惡意降低）
+            var total = dto.TotalAmount;
+            if (total < itemsTotal) total = itemsTotal;
+
+            // 3) 交易：產生訂單編號、寫入主檔＋明細
             using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
             var orderNo = await GenerateOrderNoAsync();
@@ -62,7 +68,7 @@ namespace prjFinalProjectApi.Controllers
                 InvoiceInMethod = dto.InvoiceType,   // 發票方式
                 CarrierNumber = dto.CarrierNumber,
                 OrderTime = DateTime.Now,
-                TotalAmount = total,
+                TotalAmount = total,                 // 寫入「小計 + 運費」
                 Note = dto.Note,
                 Status = "未付款",
                 OrderNo = orderNo
@@ -80,13 +86,18 @@ namespace prjFinalProjectApi.Controllers
 
             await tx.CommitAsync();
 
-            // 前端目前使用 res.merchantTradeNo ?? res.orderNo
+            // （可選）計算回傳用 shippingFee，方便前端除錯顯示
+            var shippingFee = Math.Max(0, total - itemsTotal);
+
             return Ok(new
             {
                 success = true,
                 orderNo,
                 orderId = order.OrderId,
-                totalAmount = total
+                itemsTotal,
+                shippingFee,
+                totalAmount = total, // = itemsTotal + shippingFee
+                merchantTradeNo = orderNo
             });
         }
 

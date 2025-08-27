@@ -35,5 +35,8 @@ namespace prjFinalProjectApi.Models.Dto
 
         [MinLength(1)]
         public List<OrderCreateDetailDto> OrderDetails { get; set; } = new();
+        // 前端送的小計+運費（與 checkout.component 的 totalAmount 對齊）
+        [Range(0, int.MaxValue)]
+        public int TotalAmount { get; set; }
     }
 }
