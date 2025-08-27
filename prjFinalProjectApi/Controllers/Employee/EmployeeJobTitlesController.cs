@@ -1,14 +1,17 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 
-namespace prjFinalProjectApi.Controllers
+namespace prjFinalProjectApi.Controllers.Employee
 {
     [Route("api/[controller]")]
     [ApiController]
+    // ✅ 後台僅接受員工 Cookie（JWT 會員無法進入）
+    [Authorize(AuthenticationSchemes = "EmployeeCookie", Policy = "EmployeeCookieOnly")]
     public class EmployeeJobTitlesController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
@@ -18,7 +21,7 @@ namespace prjFinalProjectApi.Controllers
             _context = context;
         }
 
-        // ✅ GET: api/EmployeeJobTitles?departmentId=1
+        // GET: api/EmployeeJobTitles?departmentId=1
         // 回傳欄位：JobTitleID, TitleName, DepartmentID（對應前端 mapping）
         [HttpGet]
         public async Task<ActionResult<IEnumerable<object>>> Get([FromQuery] int? departmentId)

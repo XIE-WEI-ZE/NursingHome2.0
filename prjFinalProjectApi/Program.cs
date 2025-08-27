@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿// Program.cs
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -9,16 +11,26 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ===== CORS（同來源部署時其實可關；先保留方便工具/Swagger 測試） =====
-builder.Services.AddCors(o => o.AddPolicy("AllowAll", p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+// ===== CORS（從 appsettings 的 AllowedCorsOrigins 讀；允許帶 Cookie）=====
+var allowed = builder.Configuration
+    .GetSection("AllowedCorsOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
 
+builder.Services.AddCors(o => o.AddPolicy("AllowWeb", p =>
+    p.WithOrigins(allowed)
+     .AllowAnyHeader()
+     .AllowAnyMethod()
+     .AllowCredentials()
+));
+
+// 必須註冊 MVC 控制器
 builder.Services.AddControllers();
 
+// 其他服務
 builder.Services.AddScoped<EmailSender>();
 builder.Services.AddSingleton<OneTimeTokenHelper>();
 
-// ===== Swagger + JWT =====
+// ===== Swagger（前台用 Bearer 測試仍可用）=====
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -54,57 +66,71 @@ builder.Services.AddSwaggerGen(c =>
 var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
 builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
 
-// ===== JWT =====
-builder.Services.Configure<EmployeeJwtOptions>(builder.Configuration.GetSection("Jwt"));
-var jwt = builder.Configuration.GetSection("Jwt").Get<EmployeeJwtOptions>()
-          ?? throw new InvalidOperationException("Jwt 設定缺失");
-if (string.IsNullOrWhiteSpace(jwt.Key) ||
-    string.IsNullOrWhiteSpace(jwt.Issuer) ||
-    string.IsNullOrWhiteSpace(jwt.Audience))
-    throw new InvalidOperationException("Jwt:Key/Issuer/Audience 不可為空");
+// ===== 讀取前台 JWT 設定 =====
+var jwtSection = builder.Configuration.GetSection("Jwt");
+var jwtKey = jwtSection["Key"] ?? throw new InvalidOperationException("Jwt:Key 缺失");
+var jwtIssuer = jwtSection["Issuer"] ?? throw new InvalidOperationException("Jwt:Issuer 缺失");
+var jwtAudience = jwtSection["Audience"] ?? throw new InvalidOperationException("Jwt:Audience 缺失");
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+// ===== Authentication：保留前台 JWT，新增後台 Cookie =====
+builder.Services.AddAuthentication(options =>
+{
+    // 預設仍用 JWT（前台）
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwt.Issuer,
-            ValidAudience = jwt.Audience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
-            ClockSkew = TimeSpan.Zero,
-            NameClaimType = ClaimTypes.Name
-        };
-    });
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+        ClockSkew = TimeSpan.Zero,
+        NameClaimType = ClaimTypes.Name
+    };
+})
+// 後台員工 Cookie（配合跨域）
+.AddCookie("EmployeeCookie", options =>
+{
+    options.LoginPath = "/api/EmployeeUserAccounts/login-cookie";
+    options.AccessDeniedPath = "/api/forbidden";
+    options.Cookie.Name = "erp.emp";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always; // 需 https
+    options.Cookie.SameSite = SameSiteMode.None;             // 跨站 XHR 必須 None
+    options.SlidingExpiration = true;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+});
 
-builder.Services.AddAuthorization();
+// ===== Authorization：員工 Cookie 專屬 Policy =====
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("EmployeeCookieOnly", p =>
+        p.AddAuthenticationSchemes("EmployeeCookie")
+         .RequireAuthenticatedUser());
+});
 
 var app = builder.Build();
 
-// ===== Swagger（僅開發環境）=====
+// ===== Swagger（僅開發）=====
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// ===== 強制 HTTPS =====
+// ===== 強制 HTTPS / 靜態檔 =====
 app.UseHttpsRedirection();
-
-// ===== 靜態檔（前端）=====
-// 讓 / 直接回 wwwroot/index.html
 app.UseDefaultFiles();
-
-// 可選：開啟快取（正式環境建議）
-// 若不想快取直接用 app.UseStaticFiles();
 app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx =>
     {
-        // 30 天快取
         const int days = 30;
         ctx.Context.Response.Headers.CacheControl = $"public,max-age={days * 24 * 60 * 60}";
     }
@@ -112,16 +138,12 @@ app.UseStaticFiles(new StaticFileOptions
 
 // ===== 路由 / CORS / Auth =====
 app.UseRouting();
-app.UseCors("AllowAll");
+app.UseCors("AllowWeb");           // 一定要在 Auth 前
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ===== API 路由 =====
+// ===== API 路由 / SPA Fallback =====
 app.MapControllers();
-
-// ===== SPA Fallback =====
-// 把除了 /api/** 以外的所有路由都交給前端（Angular Router）
-// 注意要放在 MapControllers 後面
 app.MapFallbackToFile("index.html");
 
 app.Run();

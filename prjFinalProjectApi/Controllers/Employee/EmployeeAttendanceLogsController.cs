@@ -1,19 +1,20 @@
-﻿// Controllers/EmployeeAttendanceLogsController.cs
+﻿// Controllers/Employee/EmployeeAttendanceLogsController.cs
 using System;
 using System.Linq;
-using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using prjFinalProjectApi.Helpers;     // User.EmployeeId()
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
 
-namespace prjFinalProjectApi.Controllers
+namespace prjFinalProjectApi.Controllers.Employee
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
+    // ✅ 後台僅接受員工 Cookie（JWT 會員無法進）
+    [Authorize(AuthenticationSchemes = "EmployeeCookie", Policy = "EmployeeCookieOnly")]
     public class EmployeeAttendanceLogsController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
@@ -29,14 +30,14 @@ namespace prjFinalProjectApi.Controllers
         [HttpGet("today")]
         public async Task<ActionResult<EmployeeAttendanceDto>> GetToday()
         {
-            var employeeId = GetEmployeeIdFromClaims();
+            var employeeId = User.EmployeeId();                         // ← 從 Cookie claims 取
             var today = DateOnly.FromDateTime(DateTime.Now.Date);
 
             var logs = await _context.EmployeeAttendanceLogs
                 .Where(x => x.EmployeeId == employeeId && x.WorkDate == today)
                 .ToListAsync();
 
-            // 取「最新一次」而不是最早
+            // 取「最新一次」
             DateTime? latestIn = logs.Where(x => x.ClockInTime.HasValue)
                                      .OrderByDescending(x => x.ClockInTime)
                                      .Select(x => x.ClockInTime)
@@ -55,7 +56,6 @@ namespace prjFinalProjectApi.Controllers
                 ClockInTime = latestIn,
                 ClockOutTime = latestOut,
                 Status = BuildStatus(latestIn, latestOut),
-                // 你前端不再用這兩個控制按鈕，就全部開放
                 CanClockIn = true,
                 CanClockOut = true
             };
@@ -69,7 +69,7 @@ namespace prjFinalProjectApi.Controllers
         [HttpPost("clock-in")]
         public async Task<ActionResult<EmployeeAttendanceDto>> ClockIn()
         {
-            var employeeId = GetEmployeeIdFromClaims();
+            var employeeId = User.EmployeeId();
             var now = DateTime.Now;
             var today = DateOnly.FromDateTime(now.Date);
 
@@ -94,7 +94,7 @@ namespace prjFinalProjectApi.Controllers
         [HttpPost("clock-out")]
         public async Task<ActionResult<EmployeeAttendanceDto>> ClockOut()
         {
-            var employeeId = GetEmployeeIdFromClaims();
+            var employeeId = User.EmployeeId();
             var now = DateTime.Now;
             var today = DateOnly.FromDateTime(now.Date);
 
@@ -119,20 +119,6 @@ namespace prjFinalProjectApi.Controllers
             if (clockIn != null && clockOut == null) return "Working";
             if (clockIn == null && clockOut != null) return "ClockedOutOnly";
             return "Completed";
-        }
-
-        // 從 JWT Claims 取出 EmployeeId
-        private int GetEmployeeIdFromClaims()
-        {
-            var id =
-                User.FindFirstValue("employeeid") ??
-                User.FindFirstValue(ClaimTypes.NameIdentifier) ??
-                User.FindFirstValue("sub");
-
-            if (int.TryParse(id, out var empId))
-                return empId;
-
-            throw new UnauthorizedAccessException("缺少 EmployeeId claims。");
         }
     }
 }

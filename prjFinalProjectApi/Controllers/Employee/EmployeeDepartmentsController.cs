@@ -1,14 +1,17 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 
-namespace prjFinalProjectApi.Controllers
+namespace prjFinalProjectApi.Controllers.Employee
 {
     [Route("api/[controller]")]
     [ApiController]
+    // ✅ 後台僅接受員工 Cookie（JWT 會員無法進）
+    [Authorize(AuthenticationSchemes = "EmployeeCookie", Policy = "EmployeeCookieOnly")]
     public class EmployeeDepartmentsController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
