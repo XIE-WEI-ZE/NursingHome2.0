@@ -10,17 +10,11 @@ namespace prjFinalProjectApi.Models.Dto
         [Required]
         public DateTime FCheckInDate { get; set; } // 移除 null 可能性
         [Required]
-        public int FBillingAmount { get; set; } 
+        public int FBillingAmount { get; set; }
         [Required]
         [MaxLength(50)]
         public string FPaymentMethod { get; set; } = null!;
-        // 可選添加其他屬性，如客戶信息，若需要
-        // [MaxLength(100)]
-        // public string Name { get; set; } = null!;
-        // [EmailAddress]
-        // [MaxLength(255)]
-        // public string Email { get; set; } = null!;
-        // [MaxLength(20)]
-        // public string Contact { get; set; } = null!;
+        [MaxLength(255)] // 可選，儲存 PayPal 訂單 ID
+        public string FPaypalOrderId { get; set; } // 新增 PayPal 訂單 ID
     }
 }
