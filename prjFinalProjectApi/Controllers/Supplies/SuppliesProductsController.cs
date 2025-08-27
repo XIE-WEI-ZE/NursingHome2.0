@@ -37,7 +37,9 @@ namespace prjFinalProjectApi.Controllers.Supplies
                                     QuantityPerUnit = SuppliesProducts.QuantityPerUnit,
                                     UnitsInStock = SuppliesProducts.UnitsInStock,
                                     PricePerUnit = SuppliesProducts.PricePerUnit,
+                                    SupplierId = SuppliesProducts.SupplierId,
                                     SuppliesSupplierName = SuppliesSupplierName.SuppliesSupplierName,
+                                    SuppliesCategoryId = SuppliesProducts.SuppliesCategoryId,
                                     SuppliesCategoryName = SuppliesCategoryName.SuppliesCategoryName,
                                     Exist = SuppliesProducts.Exist
                                 }).ToListAsync();
@@ -79,13 +81,8 @@ namespace prjFinalProjectApi.Controllers.Supplies
         // PUT: api/SuppliesProducts/5
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutSuppliesProduct(int id, SuppliesProduct suppliesProduct)
+        public async Task<ActionResult> PutSuppliesProduct(int id, SuppliesProduct suppliesProduct)
         {
-            if (id != suppliesProduct.SuppliesProductId)
-            {
-                return BadRequest();
-            }
-
             var _suppliesProductToUpdate = await _context.SuppliesProducts.FindAsync(id);
             if(_suppliesProductToUpdate == null) return NotFound();
 

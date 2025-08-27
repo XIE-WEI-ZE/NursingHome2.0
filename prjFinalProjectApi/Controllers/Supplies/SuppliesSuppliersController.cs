@@ -44,14 +44,25 @@ namespace prjFinalProjectApi.Controllers.Supplies
         // PUT: api/SuppliesSuppliers/5
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutSuppliesSupplier(int id, SuppliesSupplier suppliesSupplier)
+        public async Task<ActionResult> PutSuppliesSupplier(int id, SuppliesSupplier suppliesSupplier)
         {
             if (id != suppliesSupplier.SuppliesSupplierId)
             {
                 return BadRequest();
             }
 
-            _context.Entry(suppliesSupplier).State = EntityState.Modified;
+            var _suppliesSupplierToUpdate = await _context.SuppliesSuppliers.FindAsync(id);
+            if (_suppliesSupplierToUpdate == null) return NotFound();
+
+            _suppliesSupplierToUpdate.SuppliesSupplierName = suppliesSupplier.SuppliesSupplierName;
+            _suppliesSupplierToUpdate.SuppliesSupplierGui = suppliesSupplier.SuppliesSupplierGui;
+            _suppliesSupplierToUpdate.ContactPerson = suppliesSupplier.ContactPerson;
+            _suppliesSupplierToUpdate.ContactNumber = suppliesSupplier.ContactNumber;
+            _suppliesSupplierToUpdate.Address = suppliesSupplier.Address;
+            _suppliesSupplierToUpdate.SupplierKeyword = suppliesSupplier.SupplierKeyword;
+            _suppliesSupplierToUpdate.Continued = suppliesSupplier.Continued;
+
+            _context.SuppliesSuppliers.Update(_suppliesSupplierToUpdate);
 
             try
             {
