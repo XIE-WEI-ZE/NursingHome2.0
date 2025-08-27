@@ -39,6 +39,10 @@ public partial class DbNursingHomeContext : DbContext
 
     public virtual DbSet<CommunityFollow> CommunityFollows { get; set; }
 
+    public virtual DbSet<CommunityFriend> CommunityFriends { get; set; }
+
+    public virtual DbSet<CommunityFriendRequest> CommunityFriendRequests { get; set; }
+
     public virtual DbSet<CommunityInteraction> CommunityInteractions { get; set; }
 
     public virtual DbSet<CommunityMessage> CommunityMessages { get; set; }
@@ -303,6 +307,31 @@ public partial class DbNursingHomeContext : DbContext
             entity.Property(e => e.FollowerId).HasColumnName("FollowerID");
             entity.Property(e => e.FollowingId).HasColumnName("FollowingID");
             entity.Property(e => e.FollowedAt).HasColumnType("datetime");
+        });
+
+        modelBuilder.Entity<CommunityFriend>(entity =>
+        {
+            entity.HasKey(e => new { e.MemberID1, e.MemberID2 })
+                  .HasName("PK_CommunityFriends");
+
+            entity.Property(e => e.MemberID1).HasColumnName("MemberID1");
+            entity.Property(e => e.MemberID2).HasColumnName("MemberID2");
+            entity.Property(e => e.CreatedAt)
+                  .HasColumnType("datetime");
+        });
+
+        modelBuilder.Entity<CommunityFriendRequest>(entity =>
+        {
+            entity.HasKey(e => e.RequestID)
+                  .HasName("PK_CommunityFriendRequests");
+
+            entity.Property(e => e.RequestID).HasColumnName("RequestID");
+            entity.Property(e => e.RequesterID).HasColumnName("RequesterID");
+            entity.Property(e => e.ReceiverID).HasColumnName("ReceiverID");
+            entity.Property(e => e.SentAt).HasColumnType("datetime");
+            entity.Property(e => e.RequestStatus)
+                  .IsRequired()
+                  .HasMaxLength(20);
         });
 
         modelBuilder.Entity<CommunityInteraction>(entity =>

@@ -257,6 +257,27 @@ namespace prjFinalProjectApi.Controllers
             return Ok(result);
         }
 
+        // 依文章ID列表取得多篇文章
+        [HttpPost("postsByIds")]
+        public async Task<IActionResult> GetPostsByIds([FromBody] int[] postIds)
+        {
+            var posts = await _context.CommunityPosts
+                .Where(p => postIds.Contains(p.PostId) && p.PostStatus == "Active")
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    id = p.PostId,
+                    title = p.Title,
+                    content = p.Content,
+                    createdAt = p.CreatedAt,
+                    memberId = p.MemberId,
+                    boardID = p.BoardId
+                })
+                .ToListAsync();
+
+            return Ok(posts);
+        }
+
         // 取得用戶對文章的互動狀態
         [HttpGet("{postId}/interaction/status/{memberId}")]
         public async Task<IActionResult> GetUserInteractionStatus(int postId, int memberId)
