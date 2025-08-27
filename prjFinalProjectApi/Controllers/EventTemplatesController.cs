@@ -46,7 +46,7 @@ public class EventTemplatesController : ControllerBase
 
 
                 // 用 EventId 串接批次（沒有導覽屬性也可）
-                Batches = _db.EventBatches
+                EventBatches = _db.EventBatches
                     .AsNoTracking()
                     .Where(b => b.EventId == t.EventId)
                     .OrderBy(b => b.BatchId)            // 需要可改成開始時間等
@@ -117,7 +117,7 @@ public class EventTemplatesController : ControllerBase
                 t.Subtitle,
                 t.DurationMinutes,
                 CoverImageUrl = $"{Request.Scheme}://{Request.Host}{t.CoverImageUrl}",
-                Batches = _db.EventBatches
+                EventBatches = _db.EventBatches
                     .AsNoTracking()
                     .Where(b => b.EventId == t.EventId)
                     .OrderBy(b => b.EventDateTimeStart)
@@ -172,7 +172,7 @@ public class EventTemplatesController : ControllerBase
             template.Subtitle,
             template.DurationMinutes,
             template.CoverImageUrl,
-            template.Batches,
+            template.EventBatches,
             SelectedBatch = chosen
         });
     }
