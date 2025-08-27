@@ -1,25 +1,27 @@
-﻿using System;
+﻿// prjFinalProjectApi/Models/RoomTable.cs
+using System;
 using System.Collections.Generic;
 
-namespace prjFinalProjectApi.Models;
-
-public partial class RoomTable
+namespace prjFinalProjectApi.Models
 {
-    public int FRoomId { get; set; }
+    public class RoomTable
+    {
+        public int FRoomId { get; set; }
+        public string? FRoomName { get; set; }
+        public string? FRoomAlias { get; set; }
+        public string? FRoomDescription { get; set; }
+        public int? FRoomPrice { get; set; }
+        public bool? FRoomType { get; set; }
+        public int? FBedCount { get; set; }
+        public string? FRoomStatus { get; set; }
+        public DateTime? LastUpdated { get; set; }
+        public virtual ICollection<RoomBed> RoomBeds { get; set; }
+        public virtual ICollection<RoomImage> RoomImages { get; set; }
 
-    public string? FRoomName { get; set; }
-
-    public string? FRoomAlias { get; set; }
-
-    public bool? FRoomType { get; set; }
-
-    public int? FBedCount { get; set; }
-
-    public string? FRoomDescription { get; set; }
-
-    public int? FRoomPrice { get; set; }
-
-    public virtual ICollection<RoomBed> RoomBeds { get; set; } = new List<RoomBed>();
-
-    public virtual ICollection<RoomImage> RoomImages { get; set; } = new List<RoomImage>();
+        public RoomTable()
+        {
+            RoomBeds = new HashSet<RoomBed>();
+            RoomImages = new HashSet<RoomImage>();
+        }
+    }
 }
