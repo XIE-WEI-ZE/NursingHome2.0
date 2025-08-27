@@ -8,8 +8,10 @@ using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Services;
 using System.Security.Claims;
 using System.Text;
+using prjFinalProjectApi.Services;  //amy
 
 var builder = WebApplication.CreateBuilder(args);
+
 
 // CORS
 builder.Services.AddCors(options =>
@@ -23,6 +25,7 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddControllers();
+builder.Services.AddHttpClient<LinePayService>(); //amy
 
 // 3. Swagger
 builder.Services.AddScoped<EmailSender>();

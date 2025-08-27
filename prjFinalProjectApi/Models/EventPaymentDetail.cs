@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace prjFinalProjectApi.Models;
 
@@ -24,6 +25,10 @@ public partial class EventPaymentDetail
     public string? EinvoiceCarrier { get; set; }
 
     public int Status { get; set; }
-
+    
     public string? TransactionId { get; set; }
+    public string? Note { get; set; }
+    public DateTime SendTime { get; set; }
+
+
 }

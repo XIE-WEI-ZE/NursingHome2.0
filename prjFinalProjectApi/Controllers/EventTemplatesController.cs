@@ -40,12 +40,13 @@ public class EventTemplatesController : ControllerBase
                 t.LastModifiedBy,
                 t.Subtitle,
                 t.DurationMinutes,
-                t.CoverImageUrl,
+                //t.CoverImageUrl,  //已前端網域抓取(預設的)
+                CoverImageUrl = $"{Request.Scheme}://{Request.Host}{t.CoverImageUrl}",//這樣才會給予後端的
 
 
 
                 // 用 EventId 串接批次（沒有導覽屬性也可）
-                Batches = _db.EventBatches
+                EventBatches = _db.EventBatches
                     .AsNoTracking()
                     .Where(b => b.EventId == t.EventId)
                     .OrderBy(b => b.BatchId)            // 需要可改成開始時間等
@@ -115,8 +116,8 @@ public class EventTemplatesController : ControllerBase
                 t.LastModifiedBy,
                 t.Subtitle,
                 t.DurationMinutes,
-                t.CoverImageUrl,
-                Batches = _db.EventBatches
+                CoverImageUrl = $"{Request.Scheme}://{Request.Host}{t.CoverImageUrl}",
+                EventBatches = _db.EventBatches
                     .AsNoTracking()
                     .Where(b => b.EventId == t.EventId)
                     .OrderBy(b => b.EventDateTimeStart)
@@ -171,7 +172,7 @@ public class EventTemplatesController : ControllerBase
             template.Subtitle,
             template.DurationMinutes,
             template.CoverImageUrl,
-            template.Batches,
+            template.EventBatches,
             SelectedBatch = chosen
         });
     }
