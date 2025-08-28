@@ -102,7 +102,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
 
-// ChatGPT
+
 builder.Services.AddScoped<IAIService>(sp =>
     new OllamaService(sp.GetRequiredService<HttpClient>(), "http://192.168.61.90:11434/api/generate"));
 
@@ -118,8 +118,8 @@ app.UseStaticFiles(new StaticFileOptions     // wwwroot
 {
     OnPrepareResponse = ctx =>
     {
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*"); // 允許所有來源
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET"); // 只允許 GET
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET"); 
         ctx.Context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type");
     }
 });
