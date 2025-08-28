@@ -1,49 +1,42 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
+using prjFinalProjectApi.Models.Dto;
+using System.Linq;
 
 namespace prjFinalProjectApi.Controllers.Employee
 {
     [Route("api/[controller]")]
     [ApiController]
-    // ✅ 後台僅接受員工 Cookie（JWT 會員無法進入）
     [Authorize(AuthenticationSchemes = "EmployeeCookie", Policy = "EmployeeCookieOnly")]
     public class EmployeeJobTitlesController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
+        public EmployeeJobTitlesController(DbNursingHomeContext context) => _context = context;
 
-        public EmployeeJobTitlesController(DbNursingHomeContext context)
-        {
-            _context = context;
-        }
-
-        // GET: api/EmployeeJobTitles?departmentId=1
-        // 回傳欄位：JobTitleID, TitleName, DepartmentID（對應前端 mapping）
+        /// <summary>
+        /// 取得職稱清單（{ id, name, deptId }）
+        /// 可用 ?departmentId=1 過濾單一部門
+        /// </summary>
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<object>>> Get([FromQuery] int? departmentId)
+        [ProducesResponseType(typeof(IEnumerable<EmployeeJobTitleOptionDto>), StatusCodes.Status200OK)]
+        public async Task<ActionResult<IEnumerable<EmployeeJobTitleOptionDto>>> Get([FromQuery] int? departmentId)
         {
             var q = _context.EmployeeJobTitles.AsNoTracking().AsQueryable();
+            if (departmentId.HasValue) q = q.Where(x => x.DepartmentId == departmentId.Value);
 
-            if (departmentId.HasValue)
-            {
-                q = q.Where(x => x.DepartmentId == departmentId.Value);
-            }
-
-            var rows = await q
+            var list = await q
                 .OrderBy(x => x.TitleName)
-                .Select(x => new
-                {
-                    JobTitleID = x.JobTitleId,
-                    TitleName = x.TitleName,
-                    DepartmentID = x.DepartmentId
-                })
+                .Select(x => new EmployeeJobTitleOptionDto(
+                    x.JobTitleId,
+                    x.TitleName ?? string.Empty,
+                    x.DepartmentId              // ← 這裡就是 int?
+                ))
                 .ToListAsync();
 
-            return Ok(rows);
+            return Ok(list);
         }
+
     }
 }

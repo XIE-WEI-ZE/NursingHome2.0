@@ -1,13 +1,13 @@
 ﻿using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
-
-using prjFinalProjectApi.Helpers;
+using prjFinalProjectApi.Helpers;                 // User.* 擴充 & PasswordHelper
 using prjFinalProjectApi.Models;
-using prjFinalProjectApi.Models.Dto;
 using EmployeeEntity = prjFinalProjectApi.Models.Employee;
 
 namespace prjFinalProjectApi.Controllers
@@ -19,16 +19,22 @@ namespace prjFinalProjectApi.Controllers
     {
         private readonly DbNursingHomeContext _db;
         private readonly ILogger<EmployeeUserAccountsController> _logger;
+        private readonly EmailSender _email;
+        private readonly string _webBase; // 寄出的連結會用到
 
         public EmployeeUserAccountsController(
             DbNursingHomeContext db,
-            ILogger<EmployeeUserAccountsController> logger)
+            ILogger<EmployeeUserAccountsController> logger,
+            EmailSender email,
+            IConfiguration cfg)
         {
             _db = db;
             _logger = logger;
+            _email = email;
+            _webBase = cfg["WebBaseUrl"] ?? "http://localhost:4200";
         }
 
-        // ===== DTOs =====
+        // ====== 小 DTOs ======
         public class RegisterFullRequest
         {
             public string Name { get; set; } = string.Empty;
@@ -43,32 +49,25 @@ namespace prjFinalProjectApi.Controllers
             public string Username { get; set; } = string.Empty;
             public string Password { get; set; } = string.Empty;
         }
-        public sealed class UpdateEmployeeDetailApi
+        public sealed class VerifyPasswordDto { public string OldPassword { get; set; } = string.Empty; }
+        public sealed class ChangePasswordDto
         {
-            public int employeeId { get; set; }
-            public string name { get; set; } = string.Empty;
-            public string identityNumber { get; set; } = string.Empty;
-            public string? birthDate { get; set; }
-            public string? phone { get; set; }
-            public string? email { get; set; }
-            public string? educationLevel { get; set; }
-            public string? registeredAddress { get; set; }
-            public string? currentAddress { get; set; }
-            public int? height { get; set; }
-            public int? weight { get; set; }
-            public string? payrollBankAccount { get; set; }
-            public string? employmentStatusText { get; set; }
-            public string? departmentName { get; set; }
-            public string? jobTitleName { get; set; }
-            public string? hireDate { get; set; }
-            public bool policeClearanceCertified { get; set; }
-            public bool isSupervisor { get; set; }
-            public bool isAdmin { get; set; }
-            public string? emergencyContactPerson { get; set; }
-            public string? emergencyContactPhone { get; set; }
-            public string? emergencyContactRelationship { get; set; }
+            public string OldPassword { get; set; } = string.Empty;
+            public string NewPassword { get; set; } = string.Empty;
         }
-        public class UploadPhotoForm { public IFormFile Photo { get; set; } = default!; }
+        public sealed class ForgotPasswordDto { public string AccountOrEmail { get; set; } = string.Empty; }
+        public sealed class ResetPasswordDto
+        {
+            public string Token { get; set; } = string.Empty;
+            public string NewPassword { get; set; } = string.Empty;
+        }
+
+        // 產生 URL-safe Base64 Token（一次性）
+        private static string NewToken(int bytes = 32)
+        {
+            var raw = RandomNumberGenerator.GetBytes(bytes);
+            return Convert.ToBase64String(raw).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
 
         // ===== 註冊（匿名） =====
         [AllowAnonymous]
@@ -122,7 +121,13 @@ namespace prjFinalProjectApi.Controllers
                 await _db.SaveChangesAsync();
 
                 await tx.CommitAsync();
-                return Ok(new { message = "註冊成功", employeeId = emp.EmployeeId, userAccountId = acc.UserAccountId, username = acc.Username });
+                return Ok(new
+                {
+                    message = "註冊成功",
+                    employeeId = emp.EmployeeId,
+                    userAccountId = acc.UserAccountId,
+                    username = acc.Username
+                });
             }
             catch (Exception ex)
             {
@@ -132,7 +137,7 @@ namespace prjFinalProjectApi.Controllers
             }
         }
 
-        // ===== 登入（Cookie 版；匿名） =====
+        // ===== 登入（Cookie；匿名） =====
         [AllowAnonymous]
         [HttpPost("login-cookie")]
         public async Task<IActionResult> LoginCookie([FromBody] LoginDto dto)
@@ -157,7 +162,6 @@ namespace prjFinalProjectApi.Controllers
                 new Claim(ClaimTypes.Name, account.Username ?? string.Empty),
                 new Claim(ClaimTypes.NameIdentifier, emp.EmployeeId.ToString()),
                 new Claim("employeeid", emp.EmployeeId.ToString()),
-                // ✅ 與擴充方法對齊
                 new Claim("deptid", (emp.DepartmentId ?? 0).ToString()),
                 new Claim("isadmin", (emp.IsAdmin ?? false) ? "true" : "false"),
                 new Claim("issupervisor", (emp.IsSupervisor ?? false) ? "true" : "false"),
@@ -196,7 +200,7 @@ namespace prjFinalProjectApi.Controllers
             return Ok(new { message = "員工已登出（Cookie）" });
         }
 
-        // ===== Me =====
+        // ===== 目前身分 =====
         [HttpGet("me")]
         public IActionResult Me()
         {
@@ -210,22 +214,154 @@ namespace prjFinalProjectApi.Controllers
             });
         }
 
-        // ===== 其餘 action（略）：你原本的 detail / update / photo / change password 等維持不變 =====
+        // ===== 舊密碼驗證 =====
+        [HttpPost("password/verify")]
+        public async Task<IActionResult> VerifyOldPassword([FromBody] VerifyPasswordDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.OldPassword)) return BadRequest("請輸入舊密碼");
+            var empId = User.EmployeeId();
+            if (empId <= 0) return Unauthorized("未登入");
 
+            var account = await _db.EmployeeUserAccounts.FirstOrDefaultAsync(a => a.EmployeeId == empId);
+            if (account is null || account.IsActive != true) return Unauthorized("帳號不存在或未啟用");
+
+            var ok = VerifyPassword(dto.OldPassword, account.PasswordSalt!, account.PasswordHash!);
+            if (!ok) return BadRequest("舊密碼不正確"); // 用 400 避免攔截器誤導頁
+
+            return Ok("OK");
+        }
+
+        // ===== 修改密碼（需登入） =====
+        [HttpPost("password/change")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.NewPassword)) return BadRequest("請輸入新密碼");
+            if (!Regex.IsMatch(dto.NewPassword, @"^[A-Za-z0-9]{4,12}$"))
+                return BadRequest("新密碼需為 4–12 位英數字");
+
+            var empId = User.EmployeeId();
+            if (empId <= 0) return Unauthorized("未登入");
+
+            var account = await _db.EmployeeUserAccounts.FirstOrDefaultAsync(a => a.EmployeeId == empId);
+            if (account is null || account.IsActive != true) return Unauthorized("帳號不存在或未啟用");
+
+            if (!string.IsNullOrWhiteSpace(dto.OldPassword))
+            {
+                var okOld = VerifyPassword(dto.OldPassword, account.PasswordSalt!, account.PasswordHash!);
+                if (!okOld) return BadRequest("舊密碼不正確");
+            }
+
+            var (hash, salt) = PasswordHelper.HashPassword(dto.NewPassword);
+            account.PasswordHash = hash;
+            account.PasswordSalt = salt;
+            account.LoginFailCount = 0;
+            account.LockedUntil = null;
+
+            await _db.SaveChangesAsync();
+            await HttpContext.SignOutAsync("EmployeeCookie"); // 改密碼後強制登出
+            return Ok("密碼已變更");
+        }
+
+        // ===== 忘記密碼：寄出重設信（匿名） =====
+        [AllowAnonymous]
+        [HttpPost("password/forgot")]
+        public async Task<IActionResult> Forgot([FromBody] ForgotPasswordDto dto)
+        {
+            var key = (dto?.AccountOrEmail ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(key)) return BadRequest("請輸入帳號或 Email");
+
+            // 以帳號或 Email 尋找帳號
+            var acc = await _db.EmployeeUserAccounts.FirstOrDefaultAsync(a => a.Username == key);
+            if (acc == null)
+            {
+                acc = await (from a in _db.EmployeeUserAccounts
+                             join e in _db.Employees on a.EmployeeId equals e.EmployeeId
+                             where e.Email == key
+                             select a).FirstOrDefaultAsync();
+            }
+
+            // 無論是否找到，都回 OK（避免暴力探測）
+            if (acc == null) return Ok(new { message = "若資料存在，已寄出重設信。" });
+
+            var email = await _db.Employees
+                .Where(e => e.EmployeeId == acc.EmployeeId)
+                .Select(e => e.Email)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(email))
+                return Ok(new { message = "若資料存在，已寄出重設信。" });
+
+            // 建立一次性 token（30 分鐘）
+            var token = NewToken(32);
+            var now = DateTime.UtcNow;
+
+            var req = new EmployeePasswordResetRequest
+            {
+                Username = acc.Username!,
+                Token = token,
+                RequestedTime = now,
+                ExpireTime = now.AddMinutes(30),
+                IsUsed = false
+            };
+            _db.EmployeePasswordResetRequests.Add(req);
+            await _db.SaveChangesAsync();
+
+            // 前端頁面：employeesetnewpassword（你指定的名稱）
+            var link = $"{_webBase}/erp/employeesetnewpassword?token={token}";
+
+            var subject = "員工密碼重設連結";
+            var html = $@"
+<p>您（或他人）要求重設密碼，請在 30 分鐘內點擊下列連結：</p>
+<p><a href=""{link}"">{link}</a></p>
+<p>若非您本人操作，請忽略本信。</p>";
+
+            try { await _email.SendAsync(email, subject, html); }
+            catch (Exception ex) { _logger.LogError(ex, "寄送重設密碼 Email 失敗"); }
+
+            return Ok(new { message = "若資料存在，已寄出重設信。" });
+        }
+
+        // ===== 依 Token 重設密碼（匿名） =====
+        [AllowAnonymous]
+        [HttpPost("password/reset")]
+        public async Task<IActionResult> Reset([FromBody] ResetPasswordDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Token) || string.IsNullOrWhiteSpace(dto.NewPassword))
+                return BadRequest("參數有誤");
+            if (!Regex.IsMatch(dto.NewPassword, "^[A-Za-z0-9]{4,12}$"))
+                return BadRequest("新密碼需為 4–12 位英數字");
+
+            var now = DateTime.UtcNow;
+
+            var req = await _db.EmployeePasswordResetRequests
+                .Where(r => r.Token == dto.Token && r.IsUsed == false && r.ExpireTime > now)
+                .FirstOrDefaultAsync();
+
+            if (req == null) return BadRequest("連結無效或已過期");
+
+            var acc = await _db.EmployeeUserAccounts.FirstOrDefaultAsync(a => a.Username == req.Username);
+            if (acc == null) return BadRequest("帳號不存在");
+
+            // 統一使用 PasswordHelper
+            var (hash, salt) = PasswordHelper.HashPassword(dto.NewPassword);
+            acc.PasswordHash = hash;
+            acc.PasswordSalt = salt;
+            acc.LoginFailCount = 0;
+            acc.LockedUntil = null;
+
+            req.IsUsed = true;
+
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "密碼已更新，請重新登入。" });
+        }
+
+        // ===== Helpers =====
         private static bool VerifyPassword(string plainPassword, string base64Salt, string base64Hash)
         {
             var salt = Convert.FromBase64String(base64Salt);
-            using var hmac = new System.Security.Cryptography.HMACSHA256(salt);
-            var computed = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(plainPassword));
+            using var hmac = new HMACSHA256(salt);
+            var computed = hmac.ComputeHash(Encoding.UTF8.GetBytes(plainPassword));
             return Convert.ToBase64String(computed) == base64Hash;
-        }
-
-        private static DateOnly? ParseDateOnly(string? yyyyMMdd)
-        {
-            if (string.IsNullOrWhiteSpace(yyyyMMdd)) return null;
-            if (DateTime.TryParse(yyyyMMdd, out var dt))
-                return DateOnly.FromDateTime(dt);
-            return null;
         }
     }
 }

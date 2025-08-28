@@ -10,6 +10,8 @@ using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Services;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.StaticFiles;   // ⬅️ 新增
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -128,6 +130,19 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+var webpProvider = new FileExtensionContentTypeProvider();
+webpProvider.Mappings[".webp"] = "image/webp";
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = webpProvider,
+    OnPrepareResponse = ctx =>
+    {
+        const int days = 30; // 與你原本的快取一致
+        ctx.Context.Response.Headers["Cache-Control"] = $"public, max-age={days * 24 * 60 * 60}";
+    }
+});
 
 app.UseHttpsRedirection();
 app.UseDefaultFiles();
