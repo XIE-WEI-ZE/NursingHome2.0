@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿// Program.cs
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -8,30 +10,91 @@ using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Services;
 using System.Security.Claims;
 using System.Text;
-using prjFinalProjectApi.Services;  //amy
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ===== CORS：統一 AllowWeb，從 appsettings:AllowedCorsOrigins 讀 =====
+var allowed = builder.Configuration
+    .GetSection("AllowedCorsOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
 
-// CORS
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-        policy.WithOrigins("http://localhost:4200")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials()
-    );
-});
+builder.Services.AddCors(o => o.AddPolicy("AllowWeb", p =>
+    p.WithOrigins(allowed)
+     .AllowAnyHeader()
+     .AllowAnyMethod()
+     .AllowCredentials()
+));
 
+// ===== MVC / 服務 =====
 builder.Services.AddControllers();
-builder.Services.AddHttpClient<LinePayService>(); //amy
-
-// 3. Swagger
+builder.Services.AddHttpClient();                 // 一般 HttpClient
+builder.Services.AddHttpClient<LinePayService>(); // LinePay
 builder.Services.AddScoped<EmailSender>();
 builder.Services.AddSingleton<OneTimeTokenHelper>();
+builder.Services.AddSignalR();
 
-// Swagger + JWT
+// ===== EF Core =====
+var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
+builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
+
+// ===== JWT Options（強型別）+ 驗證 =====
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
+          ?? throw new InvalidOperationException("Jwt 設定缺失");
+if (string.IsNullOrWhiteSpace(jwt.Key) || string.IsNullOrWhiteSpace(jwt.Issuer) || string.IsNullOrWhiteSpace(jwt.Audience))
+    throw new InvalidOperationException("Jwt:Key/Issuer/Audience 不可為空");
+
+builder.Services.AddAuthentication(options =>
+{
+    // 預設仍用 JWT（前台）
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwt.Issuer,
+        ValidAudience = jwt.Audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+        ClockSkew = TimeSpan.Zero,
+        NameClaimType = ClaimTypes.Name
+    };
+})
+// 後台員工 Cookie（跨站需 HTTPS + SameSite=None）
+.AddCookie("EmployeeCookie", options =>
+{
+    options.LoginPath = "/api/EmployeeUserAccounts/login-cookie";
+    options.AccessDeniedPath = "/api/forbidden";
+    options.Cookie.Name = "erp.emp";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.Cookie.SameSite = SameSiteMode.None;
+    options.SlidingExpiration = true;
+    options.ExpireTimeSpan = TimeSpan.FromHours(8);
+});
+
+// ===== Authorization：前台/後台分流 Policy =====
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("MemberOnly", p =>
+        p.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+         .RequireAuthenticatedUser());
+
+    options.AddPolicy("EmployeeCookieOnly", p =>
+        p.AddAuthenticationSchemes("EmployeeCookie")
+         .RequireAuthenticatedUser());
+});
+
+// LLM 服務（Ollama）
+builder.Services.AddScoped<IAIService>(sp =>
+    new OllamaService(sp.GetRequiredService<HttpClient>(), "http://192.168.61.90:11434/api/generate"));
+
+// ===== Swagger（開發期）=====
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -47,84 +110,43 @@ builder.Services.AddSwaggerGen(c =>
     });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
-        { new OpenApiSecurityScheme
+        {
+            new OpenApiSecurityScheme
             { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
-          Array.Empty<string>() }
+            Array.Empty<string>()
+        }
     });
-
-    // 🔹 解決 DTO 名稱重複 (原因1)
-    c.CustomSchemaIds(type => type.FullName?.Replace("+", "."));
-
-    // 🔹 解決 DateOnly / TimeOnly 無法序列化 (原因2)
+    c.CustomSchemaIds(t => t.FullName?.Replace("+", "."));
     c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
     c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
-
 });
-
-// EF Core
-var conn = builder.Configuration.GetConnectionString("NursingHomeConnection");
-builder.Services.AddDbContext<DbNursingHomeContext>(opt => opt.UseSqlServer(conn));
-
-
-// Line 登入
-builder.Services.AddHttpClient();
-
-builder.Services.AddSignalR(); // SignalR
-
-
-//  綁定 Jwt 強型別設定 + 啟動期檢查
-builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
-var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
-          ?? throw new InvalidOperationException("Jwt 設定缺失");
-if (string.IsNullOrWhiteSpace(jwt.Key) ||
-    string.IsNullOrWhiteSpace(jwt.Issuer) ||
-    string.IsNullOrWhiteSpace(jwt.Audience))
-    throw new InvalidOperationException("Jwt:Key/Issuer/Audience 不可為空");
-
-// JWT 驗證
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwt.Issuer,
-            ValidAudience = jwt.Audience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
-            ClockSkew = TimeSpan.Zero,
-            NameClaimType = ClaimTypes.Name
-        };
-    });
-
-builder.Services.AddAuthorization();
-builder.Services.AddHttpClient();
-
-
-builder.Services.AddScoped<IAIService>(sp =>
-    new OllamaService(sp.GetRequiredService<HttpClient>(), "http://192.168.61.90:11434/api/generate"));
 
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
-app.UseRouting(); // 添加路由，確保 CORS 生效 (先有路由，才能有 CORS)
-app.UseCors("AllowAll");
 app.UseHttpsRedirection();
-app.UseStaticFiles(new StaticFileOptions     // wwwroot
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
 {
     OnPrepareResponse = ctx =>
     {
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET"); 
-        ctx.Context.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type");
+        const int days = 30;
+        ctx.Context.Response.Headers["Cache-Control"] = $"public, max-age={days * 24 * 60 * 60}";
     }
 });
-app.UseAuthentication();   // 先驗證
-app.UseAuthorization();    // 再授權
-app.MapHub<ChatHub>("/chathub"); // SignalR
+
+app.UseRouting();
+app.UseCors("AllowWeb");     
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapHub<ChatHub>("/chathub");
 app.MapControllers();
+
+
 app.Run();
