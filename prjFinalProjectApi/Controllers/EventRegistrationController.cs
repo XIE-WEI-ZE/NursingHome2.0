@@ -52,7 +52,7 @@ namespace prjFinalProjectApi.Controllers
 
             // ===== 產生 RegistrationNum：REG + yyyyMMdd + 3 位流水（保留你的做法，含重試） =====
             var ymd = now.ToString("yyyyMMdd");
-            var prefix = $"REG0{ymd}";
+            var prefix = $"REG{ymd}";
             const int maxAttempts = 3;
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
