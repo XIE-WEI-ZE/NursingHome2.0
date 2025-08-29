@@ -101,6 +101,77 @@ namespace prjFinalProjectApi.Controllers
             });
         }
 
+        // ===========================
+        //  新增：扣庫存 API
+        //  POST /api/Checkout/DeductStock
+        //  body: { "orderNo": "ORD-20250829-0001" }
+        // ===========================
+        // 請保留在 CheckoutController 內
+        public class DeductStockRequest
+        {
+            public string? OrderNo { get; set; }
+        }
+
+        [HttpPost("DeductStock")]
+        public async Task<IActionResult> DeductStock([FromBody] DeductStockRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req?.OrderNo))
+                return BadRequest(new { message = "orderNo 不可為空" });
+
+            var order = await _context.ShopOrders
+                .FirstOrDefaultAsync(o => o.OrderNo == req.OrderNo);
+
+            if (order == null)
+                return NotFound(new { message = "找不到訂單" });
+
+            // 一定要已付款才能扣庫存（避免被任意呼叫）
+            if (string.IsNullOrEmpty(order.Status) || !order.Status.Contains("已付款"))
+                return BadRequest(new { message = "訂單尚未付款，禁止扣庫存" });
+
+            if (!string.IsNullOrEmpty(order.Status) && order.Status.Contains("已扣庫存"))
+                return Ok(new { success = true, message = "庫存先前已扣除", orderNo = order.OrderNo });
+
+            var details = await _context.ShopOrderDetails
+                .Where(d => d.OrderId == order.OrderId)
+                .ToListAsync();
+
+            if (details.Count == 0)
+                return BadRequest(new { message = "訂單明細為空，無法扣庫存" });
+
+            using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+            foreach (var d in details)
+            {
+                var product = await _context.ShopProducts
+                    .FirstOrDefaultAsync(p => p.ProductId == d.ProductId);
+
+                if (product == null)
+                    return BadRequest(new { message = $"找不到商品 (ID={d.ProductId})" });
+
+                var currentStock = product.Stock; // 若欄位是 short 可先轉 int 再回寫
+                if (currentStock < d.Quantity)
+                {
+                    return BadRequest(new
+                    {
+                        message = $"{product.ProductName} 庫存不足（現有 {currentStock}，需求 {d.Quantity}）"
+                    });
+                }
+
+                product.Stock = (short)(currentStock - d.Quantity);
+                _context.ShopProducts.Update(product);
+            }
+
+            order.Status = (order.Status ?? string.Empty) + " / 已扣庫存";
+            _context.ShopOrders.Update(order);
+
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return Ok(new { success = true, message = "庫存已扣除", orderNo = order.OrderNo });
+        }
+
+
+
         // 併發安全的當日流水號：ORD-YYYYMMDD-0001
         private async Task<string> GenerateOrderNoAsync()
         {
