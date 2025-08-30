@@ -118,19 +118,29 @@ namespace prjFinalProjectApi.Controllers
             if (string.IsNullOrWhiteSpace(req?.OrderNo))
                 return BadRequest(new { message = "orderNo 不可為空" });
 
+            // 這裡不再使用 Include
             var order = await _context.ShopOrders
                 .FirstOrDefaultAsync(o => o.OrderNo == req.OrderNo);
 
             if (order == null)
                 return NotFound(new { message = "找不到訂單" });
 
-            // 一定要已付款才能扣庫存（避免被任意呼叫）
-            if (string.IsNullOrEmpty(order.Status) || !order.Status.Contains("已付款"))
-                return BadRequest(new { message = "訂單尚未付款，禁止扣庫存" });
-
+            // 冪等：已扣過就直接回 OK
             if (!string.IsNullOrEmpty(order.Status) && order.Status.Contains("已扣庫存"))
                 return Ok(new { success = true, message = "庫存先前已扣除", orderNo = order.OrderNo });
 
+            var isCOD = string.Equals(order.PaymentMethod, "COD", StringComparison.OrdinalIgnoreCase);
+            var isPaid = !string.IsNullOrEmpty(order.Status) && order.Status.Contains("已付款");
+
+            // 非 COD 必須已付款；COD 例外允許扣（等同預留）
+            if (!isCOD && !isPaid)
+                return BadRequest(new
+                {
+                    message = "訂單尚未付款，禁止扣庫存",
+                    debug = new { order.PaymentMethod, order.Status, isCOD, isPaid }
+                });
+
+            // 用 order.OrderId 去明細表查
             var details = await _context.ShopOrderDetails
                 .Where(d => d.OrderId == order.OrderId)
                 .ToListAsync();
@@ -138,7 +148,7 @@ namespace prjFinalProjectApi.Controllers
             if (details.Count == 0)
                 return BadRequest(new { message = "訂單明細為空，無法扣庫存" });
 
-            using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            using var tx = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
             foreach (var d in details)
             {
@@ -148,14 +158,9 @@ namespace prjFinalProjectApi.Controllers
                 if (product == null)
                     return BadRequest(new { message = $"找不到商品 (ID={d.ProductId})" });
 
-                var currentStock = product.Stock; // 若欄位是 short 可先轉 int 再回寫
+                var currentStock = (int)product.Stock; // 若資料型別為 short，先轉 int 比較安全
                 if (currentStock < d.Quantity)
-                {
-                    return BadRequest(new
-                    {
-                        message = $"{product.ProductName} 庫存不足（現有 {currentStock}，需求 {d.Quantity}）"
-                    });
-                }
+                    return BadRequest(new { message = $"{product.ProductName} 庫存不足（現有 {currentStock}，需求 {d.Quantity}）" });
 
                 product.Stock = (short)(currentStock - d.Quantity);
                 _context.ShopProducts.Update(product);
