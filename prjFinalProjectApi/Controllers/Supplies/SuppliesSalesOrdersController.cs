@@ -29,6 +29,8 @@ namespace prjFinalProjectApi.Controllers.Supplies
                 from sso in _context.SuppliesSalesOrders
                 join ssod in _context.SuppliesSalesOrderDetails on sso.SuppliesSalesOrderId equals ssod.SuppliesSalesOrderId
                 join spn in _context.SuppliesProducts on ssod.SuppliesProductId equals spn.SuppliesProductId
+                join cat in _context.SuppliesCategories on spn.SuppliesCategoryId equals cat.SuppliesCategoryId
+                join spr in _context.SuppliesSuppliers on spn.SupplierId equals spr.SuppliesSupplierId
                 select new SuppliessalesDto
                 {
                     SuppliesSalesOrderId = sso.SuppliesSalesOrderId,
@@ -40,7 +42,11 @@ namespace prjFinalProjectApi.Controllers.Supplies
                     SuppliesProductId = ssod.SuppliesProductId,
                     QuantityOfSales = ssod.QuantityOfSales,
                     ExpiryDate = ssod.ExpiryDate,
-                    SuppliesProductName = spn.SuppliesProductName
+                    SuppliesProductName = spn.SuppliesProductName,
+                    SuppliesCategoryId = cat.SuppliesCategoryId,
+                    SuppliesCategoryName = cat.SuppliesCategoryName,
+                    SuppliesSupplierId = spr.SuppliesSupplierId,
+                    SuppliesSupplierName = spr.SuppliesSupplierName
                 }).ToListAsync();
             return Ok(suppliesSalesOrders);
         }
@@ -93,14 +99,55 @@ namespace prjFinalProjectApi.Controllers.Supplies
         // POST: api/SuppliesSalesOrders
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPost]
-        public async Task<ActionResult<SuppliesSalesOrder>> PostSuppliesSalesOrder(SuppliesSalesOrder suppliesSalesOrder)
+        public async Task<IActionResult> PostSuppliesSalesOrder(SuppliesSalesOrderDto dto)
         {
-            _context.SuppliesSalesOrders.Add(suppliesSalesOrder);
-            await _context.SaveChangesAsync();
+            using var transaction = await _context.Database.BeginTransactionAsync();
 
-            return CreatedAtAction("GetSuppliesSalesOrder", new { id = suppliesSalesOrder.SuppliesSalesOrderId }, suppliesSalesOrder);
+
+            try
+            {
+                // 新增一筆訂單
+                var salesOrder = new SuppliesSalesOrder
+                {
+                    OrderDate = dto.OrderDate,
+                    CustomerName = dto.CustomerName,
+                    ReceivedDate = dto.ReceivedDate,
+                    OrderStatus = dto.OrderStatus
+                };
+
+
+                _context.SuppliesSalesOrders.Add(salesOrder);
+                await _context.SaveChangesAsync();
+
+
+                // 新增多筆明細
+                foreach (var detailDto in dto.Details)
+                {
+                    var detail = new SuppliesSalesOrderDetail
+                    {
+                        SuppliesSalesOrderId = salesOrder.SuppliesSalesOrderId,
+                        SuppliesProductId = detailDto.SuppliesProductId,
+                        QuantityOfSales = detailDto.QuantityOfSales,
+                        ExpiryDate = detailDto.ExpiryDate
+                    };
+
+
+                    _context.SuppliesSalesOrderDetails.Add(detail);
+                }
+
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+
+                return Ok(new { salesOrder.SuppliesSalesOrderId, Message = "Order created successfully" });
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new { Error = ex.Message });
+            }
         }
-
         // DELETE: api/SuppliesSalesOrders/5
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSuppliesSalesOrder(int id)
