@@ -118,7 +118,6 @@ namespace prjFinalProjectApi.Controllers
             if (string.IsNullOrWhiteSpace(req?.OrderNo))
                 return BadRequest(new { message = "orderNo 不可為空" });
 
-            // 這裡不再使用 Include
             var order = await _context.ShopOrders
                 .FirstOrDefaultAsync(o => o.OrderNo == req.OrderNo);
 
