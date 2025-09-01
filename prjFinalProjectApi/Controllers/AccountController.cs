@@ -265,7 +265,7 @@ namespace prjFinalProjectApi.Controllers
                     }
                 }
 
-                //  停權檢查（第三方也要擋）
+                //  停權檢查
                 if (!await IsMemberActiveAsync(member))
                     return Unauthorized(new { message = "帳號已停權，請聯絡管理員" });
 
