@@ -1,11 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
+using prjFinalProjectApi.Models.Dto;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace prjFinalProjectApi.Controllers.Supplies
 {
@@ -24,7 +25,27 @@ namespace prjFinalProjectApi.Controllers.Supplies
         [HttpGet]
         public async Task<ActionResult<IEnumerable<SuppliesPurchasingOrder>>> GetSuppliesPurchasingOrders()
         {
-            return await _context.SuppliesPurchasingOrders.ToListAsync();
+            var suppliesPurchasingOrders = await (
+                from spo in _context.SuppliesPurchasingOrders
+                join spod in _context.SuppliesPurchasingOrderDetails on spo.SuppliesPurchasingOrderId equals spod.SuppliesPurchasingOrderId
+                join sp in _context.SuppliesProducts on spod.SuppliesProductId equals sp.SuppliesProductId
+                join spc in _context.SuppliesCategories on sp.SuppliesCategoryId equals spc.SuppliesCategoryId
+                join sps in _context.SuppliesSuppliers on spo.SuppliesSupplierId equals sps.SuppliesSupplierId
+                select new SuppliespurchasingDto
+                {
+                    SuppliesPurchasingOrderId = spo.SuppliesPurchasingOrderId,
+                    SuppliesSupplierId = spo.SuppliesSupplierId,
+                    ArrivalDate = spo.ArrivalDate,
+                    SuppliesPurchasingOrderDetailId = spod.SuppliesPurchasingOrderDetailId,
+                    SuppliesProductId = spod.SuppliesProductId,
+                    SuppliesProductName = sp.SuppliesProductName,
+                    QuantityIn = spod.QuantityIn,
+                    ExpiryDate = spod.ExpiryDate,
+                    SuppliesSupplierName = sps.SuppliesSupplierName,
+                    SuppliesCategoryId = spc.SuppliesCategoryId,
+                    SuppliesCategoryName = spc.SuppliesCategoryName
+                }).ToListAsync();
+            return Ok(suppliesPurchasingOrders);
         }
 
         // GET: api/SuppliesPurchasing/5
@@ -81,6 +102,72 @@ namespace prjFinalProjectApi.Controllers.Supplies
             await _context.SaveChangesAsync();
 
             return CreatedAtAction("GetSuppliesPurchasingOrder", new { id = suppliesPurchasingOrder.SuppliesPurchasingOrderId }, suppliesPurchasingOrder);
+        }
+        [HttpPost("CreatePurchasingOrder")]
+        public async Task<ActionResult> CreatePurchasingOrder(SuppliesPurchasingOrderDto dto)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // 1. 新增進貨單主表
+                var order = new SuppliesPurchasingOrder
+                {
+                    SuppliesSupplierId = dto.SuppliesSupplierId,
+                    ArrivalDate = dto.ArrivalDate
+                };
+                _context.SuppliesPurchasingOrders.Add(order);
+                await _context.SaveChangesAsync();
+
+                // 2. 新增明細
+                foreach (var detail in dto.Details)
+                {
+                    var orderDetail = new SuppliesPurchasingOrderDetail
+                    {
+                        SuppliesPurchasingOrderId = order.SuppliesPurchasingOrderId,
+                        SuppliesProductId = detail.SuppliesProductId,
+                        QuantityIn = detail.QuantityIn,
+                        ExpiryDate = detail.ExpiryDate
+                    };
+                    _context.SuppliesPurchasingOrderDetails.Add(orderDetail);
+
+                    // 3. 更新物品主表庫存
+                    var product = await _context.SuppliesProducts
+                        .FirstOrDefaultAsync(p => p.SuppliesProductId == detail.SuppliesProductId);
+                    if (product != null)
+                    {
+                        product.UnitsInStock += detail.QuantityIn ?? 0;
+                    }
+
+                    // 4. 更新 / 新增物品效期庫存
+                    var productDate = await _context.SuppliesProductsDates
+                        .FirstOrDefaultAsync(pd => pd.SuppliesProductId == detail.SuppliesProductId
+                                                && pd.ExpiryDate == detail.ExpiryDate);
+                    if (productDate != null)
+                    {
+                        productDate.RemainingStocks += detail.QuantityIn ?? 0;
+                    }
+                    else
+                    {
+                        _context.SuppliesProductsDates.Add(new SuppliesProductsDate
+                        {
+                            SuppliesProductId = detail.SuppliesProductId ?? 0,
+                            ExpiryDate = detail.ExpiryDate,
+                            RemainingStocks = detail.QuantityIn ?? 0
+                        });
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return Ok(new { order.SuppliesPurchasingOrderId });
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
 
         // DELETE: api/SuppliesPurchasing/5

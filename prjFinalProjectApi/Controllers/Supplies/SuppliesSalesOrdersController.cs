@@ -1,10 +1,13 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -15,6 +18,7 @@ namespace prjFinalProjectApi.Controllers.Supplies
     public class SuppliesSalesOrdersController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
+
 
         public SuppliesSalesOrdersController(DbNursingHomeContext context)
         {
@@ -98,56 +102,155 @@ namespace prjFinalProjectApi.Controllers.Supplies
 
         // POST: api/SuppliesSalesOrders
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
+        //[HttpPost]
+        //public async Task<IActionResult> PostSuppliesSalesOrder(SuppliesSalesOrderDto dto)
+        //{
+        //    try
+        //    {
+        //        // 建立 DataTable 來模擬 TVP (dbo.SalesOrderDetailType)
+        //        var detailsTable = new DataTable();
+        //        detailsTable.Columns.Add("SuppliesProductId", typeof(int));
+        //        detailsTable.Columns.Add("QuantityOfSales", typeof(int));
+        //        detailsTable.Columns.Add("ExpiryDate", typeof(DateTime));
+
+        //        foreach (var d in dto.Details)
+        //        {
+        //            detailsTable.Rows.Add(d.SuppliesProductId, d.QuantityOfSales, d.ExpiryDate?.ToDateTime(new TimeOnly(0, 0)));
+        //        }
+
+        //        // 定義參數
+        //        var parameters = new[]
+        //        {
+        //    new SqlParameter("@OrderDate", dto.OrderDate?.ToDateTime(new TimeOnly(0,0)) ?? (object)DBNull.Value),
+        //    new SqlParameter("@CustomerName", dto.CustomerName ?? (object)DBNull.Value),
+        //    new SqlParameter("@ReceivedDate", dto.ReceivedDate?.ToDateTime(new TimeOnly(0,0)) ?? (object)DBNull.Value),
+        //    new SqlParameter("@OrderStatus", dto.OrderStatus ?? (object)DBNull.Value),
+
+        //    // TVP 參數 (必須事先在 SQL 建立 TYPE: dbo.SalesOrderDetailType)
+        //    new SqlParameter("@OrderDetails", detailsTable)
+        //    {
+        //        SqlDbType = SqlDbType.Structured,
+        //        TypeName = "dbo.SalesOrderDetailType"
+        //    }
+        //};
+
+        //        // 執行 Stored Procedure
+        //        await _context.Database.ExecuteSqlRawAsync(
+        //            "EXEC sp_CreateSalesOrder @OrderDate, @CustomerName, @ReceivedDate, @OrderStatus, @OrderDetails",
+        //            parameters
+        //        );
+
+        //        return Ok(new { Message = "Order created successfully (via Stored Procedure)" });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return BadRequest(new { Error = ex.Message });
+        //    }
+
+        //    //using var transaction = await _context.Database.BeginTransactionAsync();
+
+
+        //    //try
+        //    //{
+        //    //    // 新增一筆訂單
+        //    //    var salesOrder = new SuppliesSalesOrder
+        //    //    {
+        //    //        OrderDate = dto.OrderDate,
+        //    //        CustomerName = dto.CustomerName,
+        //    //        ReceivedDate = dto.ReceivedDate,
+        //    //        OrderStatus = dto.OrderStatus
+        //    //    };
+
+
+        //    //    _context.SuppliesSalesOrders.Add(salesOrder);
+        //    //    await _context.SaveChangesAsync();
+
+
+        //    //    // 新增多筆明細
+        //    //    foreach (var detailDto in dto.Details)
+        //    //    {
+        //    //        var detail = new SuppliesSalesOrderDetail
+        //    //        {
+        //    //            SuppliesSalesOrderId = salesOrder.SuppliesSalesOrderId,
+        //    //            SuppliesProductId = detailDto.SuppliesProductId,
+        //    //            QuantityOfSales = detailDto.QuantityOfSales,
+        //    //            ExpiryDate = detailDto.ExpiryDate
+        //    //        };
+
+
+        //    //        _context.SuppliesSalesOrderDetails.Add(detail);
+        //    //    }
+
+
+        //    //    await _context.SaveChangesAsync();
+        //    //    await transaction.CommitAsync();
+
+
+        //    //    return Ok(new { salesOrder.SuppliesSalesOrderId, Message = "Order created successfully" });
+        //    //}
+        //    //catch (Exception ex)
+        //    //{
+        //    //    await transaction.RollbackAsync();
+        //    //    return BadRequest(new { Error = ex.Message });
+        //    //}
+        //}
+
         [HttpPost]
         public async Task<IActionResult> PostSuppliesSalesOrder(SuppliesSalesOrderDto dto)
         {
-            using var transaction = await _context.Database.BeginTransactionAsync();
-
-
             try
             {
-                // 新增一筆訂單
-                var salesOrder = new SuppliesSalesOrder
+                // 檢查 DTO 是否正確接到
+                if (dto == null || dto.Details == null || !dto.Details.Any())
                 {
-                    OrderDate = dto.OrderDate,
-                    CustomerName = dto.CustomerName,
-                    ReceivedDate = dto.ReceivedDate,
-                    OrderStatus = dto.OrderStatus
-                };
-
-
-                _context.SuppliesSalesOrders.Add(salesOrder);
-                await _context.SaveChangesAsync();
-
-
-                // 新增多筆明細
-                foreach (var detailDto in dto.Details)
-                {
-                    var detail = new SuppliesSalesOrderDetail
-                    {
-                        SuppliesSalesOrderId = salesOrder.SuppliesSalesOrderId,
-                        SuppliesProductId = detailDto.SuppliesProductId,
-                        QuantityOfSales = detailDto.QuantityOfSales,
-                        ExpiryDate = detailDto.ExpiryDate
-                    };
-
-
-                    _context.SuppliesSalesOrderDetails.Add(detail);
+                    return BadRequest(new { Error = "Order data is missing or invalid." });
                 }
 
+                // 建立 DataTable 來模擬 TVP (dbo.SalesOrderDetailType)
+                var detailsTable = new DataTable();
+                detailsTable.Columns.Add("SuppliesProductId", typeof(int));
+                detailsTable.Columns.Add("QuantityOfSales", typeof(int));
+                detailsTable.Columns.Add("ExpiryDate", typeof(DateTime));
 
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
+                foreach (var d in dto.Details)
+                {
+                    detailsTable.Rows.Add(
+                        d.SuppliesProductId ?? (object)DBNull.Value,
+                        d.QuantityOfSales ?? (object)DBNull.Value,
+                        d.ExpiryDate?.Date ?? (object)DBNull.Value
+                    );
+                }
 
+                // 定義參數
+                var parameters = new[]
+                {
+            new SqlParameter("@OrderDate", dto.OrderDate?.Date ?? (object)DBNull.Value),
+            new SqlParameter("@CustomerName", dto.CustomerName ?? (object)DBNull.Value),
+            new SqlParameter("@ReceivedDate", dto.ReceivedDate?.Date ?? (object)DBNull.Value),
+            new SqlParameter("@OrderStatus", dto.OrderStatus ?? (object)DBNull.Value),
 
-                return Ok(new { salesOrder.SuppliesSalesOrderId, Message = "Order created successfully" });
+            // TVP 參數 (必須事先在 SQL 建立 TYPE: dbo.TVP_SalesOrderDetail)
+            new SqlParameter("@OrderDetails", detailsTable)
+                {
+                    SqlDbType = SqlDbType.Structured,
+                    TypeName = "dbo.TVP_SalesOrderDetail"   
+                }
+            };
+
+                // 執行 Stored Procedure
+                await _context.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_CreateSalesOrder @OrderDate, @CustomerName, @ReceivedDate, @OrderStatus, @OrderDetails",
+                    parameters
+                );
+
+                return Ok(new { Message = "Order created successfully (via Stored Procedure)" });
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
                 return BadRequest(new { Error = ex.Message });
             }
         }
+
         // DELETE: api/SuppliesSalesOrders/5
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSuppliesSalesOrder(int id)

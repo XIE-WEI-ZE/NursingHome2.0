@@ -30,20 +30,36 @@
         
         public string? SuppliesSupplierName { get; set; }
     }
+    //public class SuppliesSalesOrderDto
+    //{
+    //    public DateOnly? OrderDate { get; set; }
+    //    public string? CustomerName { get; set; }
+    //    public DateOnly? ReceivedDate { get; set; }
+    //    public string? OrderStatus { get; set; }
+    //    public List<SuppliesSalesOrderDetailDto> Details { get; set; } = new();
+    //}
+
+
+    //public class SuppliesSalesOrderDetailDto
+    //{
+    //    public int? SuppliesProductId { get; set; }
+    //    public int? QuantityOfSales { get; set; }
+    //    public DateOnly? ExpiryDate { get; set; }
+    //}
     public class SuppliesSalesOrderDto
     {
-        public DateOnly? OrderDate { get; set; }
+        public DateTime? OrderDate { get; set; }
         public string? CustomerName { get; set; }
-        public DateOnly? ReceivedDate { get; set; }
+        public DateTime? ReceivedDate { get; set; }
         public string? OrderStatus { get; set; }
         public List<SuppliesSalesOrderDetailDto> Details { get; set; } = new();
     }
-
 
     public class SuppliesSalesOrderDetailDto
     {
         public int? SuppliesProductId { get; set; }
         public int? QuantityOfSales { get; set; }
-        public DateOnly? ExpiryDate { get; set; }
+        public DateTime? ExpiryDate { get; set; }
     }
+
 }
