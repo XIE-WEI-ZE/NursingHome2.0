@@ -62,4 +62,8 @@
         public DateTime? ExpiryDate { get; set; }
     }
 
+    public class UpdateStatusDto
+    {
+        public string Status { get; set; }
+    }
 }
