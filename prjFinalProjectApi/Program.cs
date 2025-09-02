@@ -122,6 +122,8 @@ builder.Services.AddSwaggerGen(c =>
     c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
     c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
 });
+builder.Services.AddScoped<EmployeeApprovalFlowService>();
+builder.Services.AddScoped<prjFinalProjectApi.Services.EmployeeApprovalFlowService>();
 
 var app = builder.Build();
 
@@ -133,6 +135,8 @@ if (app.Environment.IsDevelopment())
 
 var webpProvider = new FileExtensionContentTypeProvider();
 webpProvider.Mappings[".webp"] = "image/webp";
+
+
 
 app.UseStaticFiles(new StaticFileOptions
 {
