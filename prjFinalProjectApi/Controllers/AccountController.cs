@@ -108,6 +108,26 @@ namespace prjFinalProjectApi.Controllers
             return Ok(new { message = "註冊成功" });
         }
 
+        [HttpGet("check-account")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CheckAccount([FromQuery] string account)
+        {
+            if (string.IsNullOrWhiteSpace(account)) return Ok(new { exists = false });
+            var acc = account.Trim();
+            bool exists = await _context.Members.AnyAsync(m => m.FAccount == acc);
+            return Ok(new { exists });
+        }
+
+        [HttpGet("check-email")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CheckEmail([FromQuery] string email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return Ok(new { exists = false });
+            var em = email.Trim().ToLower();
+            bool exists = await _context.Members.AnyAsync(m => m.FEmail != null && m.FEmail.ToLower() == em);
+            return Ok(new { exists });
+        }
+
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
