@@ -1,10 +1,13 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -16,6 +19,7 @@ namespace prjFinalProjectApi.Controllers.Supplies
     {
         private readonly DbNursingHomeContext _context;
 
+
         public SuppliesSalesOrdersController(DbNursingHomeContext context)
         {
             _context = context;
@@ -23,26 +27,73 @@ namespace prjFinalProjectApi.Controllers.Supplies
 
         // GET: api/SuppliesSalesOrders
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<SuppliesSalesOrder>>> GetSuppliesSalesOrders()
+        public async Task<ActionResult<IEnumerable<SuppliesSalesOrderDto>>> 
+            GetSuppliesSalesOrders
+            (
+            [FromQuery] string? keyword,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string? status = ""
+            )
         {
-            var suppliesSalesOrders = await (
-                from sso in _context.SuppliesSalesOrders
-                join ssod in _context.SuppliesSalesOrderDetails on sso.SuppliesSalesOrderId equals ssod.SuppliesSalesOrderId
-                join spn in _context.SuppliesProducts on ssod.SuppliesProductId equals spn.SuppliesProductId
-                select new SuppliessalesDto
-                {
-                    SuppliesSalesOrderId = sso.SuppliesSalesOrderId,
-                    OrderDate = sso.OrderDate,
-                    CustomerName = sso.CustomerName,
-                    ReceivedDate = sso.ReceivedDate,
-                    OrderStatus = sso.OrderStatus,
-                    SuppliesSalesOrderDetailId = ssod.SuppliesSalesOrderDetailId,
-                    SuppliesProductId = ssod.SuppliesProductId,
-                    QuantityOfSales = ssod.QuantityOfSales,
-                    ExpiryDate = ssod.ExpiryDate,
-                    SuppliesProductName = spn.SuppliesProductName
-                }).ToListAsync();
-            return Ok(suppliesSalesOrders);
+            // 分頁初始化
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            var query = from sso in _context.SuppliesSalesOrders
+                        join ssod in _context.SuppliesSalesOrderDetails on sso.SuppliesSalesOrderId equals ssod.SuppliesSalesOrderId
+                        join spn in _context.SuppliesProducts on ssod.SuppliesProductId equals spn.SuppliesProductId
+                        join cat in _context.SuppliesCategories on spn.SuppliesCategoryId equals cat.SuppliesCategoryId
+                        join spr in _context.SuppliesSuppliers on spn.SupplierId equals spr.SuppliesSupplierId
+                        select new SuppliessalesDto
+                        {
+                            SuppliesSalesOrderId = sso.SuppliesSalesOrderId,
+                            OrderDate = sso.OrderDate,
+                            CustomerName = sso.CustomerName,
+                            ReceivedDate = sso.ReceivedDate,
+                            OrderStatus = sso.OrderStatus,
+                            SuppliesSalesOrderDetailId = ssod.SuppliesSalesOrderDetailId,
+                            SuppliesProductId = ssod.SuppliesProductId,
+                            QuantityOfSales = ssod.QuantityOfSales,
+                            ExpiryDate = ssod.ExpiryDate,
+                            SuppliesProductName = spn.SuppliesProductName,
+                            SuppliesCategoryId = cat.SuppliesCategoryId,
+                            SuppliesCategoryName = cat.SuppliesCategoryName,
+                            SuppliesSupplierId = spr.SuppliesSupplierId,
+                            SuppliesSupplierName = spr.SuppliesSupplierName
+                        };
+
+            // 關鍵字搜尋
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(x =>
+                    x.CustomerName.Contains(keyword) ||
+                    x.SuppliesSalesOrderId.ToString().Contains(keyword)
+                );
+            }
+            if (!string.IsNullOrEmpty(status))
+            {
+                query = query.Where(x => x.OrderStatus == status);
+            }
+            // 取得總筆數（分頁用）
+            var totalCount = await query.CountAsync();
+
+            // 分頁處理
+            var data = await query
+                .OrderByDescending(x => x.SuppliesSalesOrderId) // 可依需求排序
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var suppliesSalesOrders = await query.ToListAsync();
+            return Ok(new
+            {
+                TotalCount = totalCount,   // 總筆數
+                Page = page,               // 當前頁
+                PageSize = pageSize,       // 每頁筆數
+                TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                Data = data                // 分頁後的資料
+            });
         }
 
         // GET: api/SuppliesSalesOrders/5
@@ -90,15 +141,105 @@ namespace prjFinalProjectApi.Controllers.Supplies
             return NoContent();
         }
 
+        [HttpPut("{id}/status")]
+        public async Task<IActionResult> UpdateOrderStatus(int id, [FromBody] UpdateStatusDto dto)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dto.Status))
+                {
+                    return BadRequest(new { Error = "Status is required" });
+                }
+
+                var parameters = new[]
+                {
+            new SqlParameter("@SuppliesSalesOrderID", id),
+            new SqlParameter("@NewStatus", dto.Status)
+        };
+
+                await _context.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_UpdateSalesOrderStatus @SuppliesSalesOrderID, @NewStatus",
+                    parameters
+                );
+
+                return Ok(new { Message = "Order status updated successfully", Status = dto.Status });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    Error = ex.Message,
+                    Inner = ex.InnerException?.Message,
+                    Stack = ex.StackTrace
+                });
+            }
+        }
+
+
+
         // POST: api/SuppliesSalesOrders
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPost]
-        public async Task<ActionResult<SuppliesSalesOrder>> PostSuppliesSalesOrder(SuppliesSalesOrder suppliesSalesOrder)
+        public async Task<IActionResult> PostSuppliesSalesOrder([FromBody] SuppliesSalesOrderDto dto)
         {
-            _context.SuppliesSalesOrders.Add(suppliesSalesOrder);
-            await _context.SaveChangesAsync();
+            try
+            {
+                if (dto == null || dto.Details == null || !dto.Details.Any())
+                {
+                    return BadRequest(new { Error = "Order data is missing or invalid." });
+                }
 
-            return CreatedAtAction("GetSuppliesSalesOrder", new { id = suppliesSalesOrder.SuppliesSalesOrderId }, suppliesSalesOrder);
+                // 準備 TVP DataTable
+                var detailsTable = new DataTable();
+                detailsTable.Columns.Add("SuppliesProductId", typeof(int));
+                detailsTable.Columns["SuppliesProductId"].AllowDBNull = false;
+
+                detailsTable.Columns.Add("QuantityOfSales", typeof(int));
+                detailsTable.Columns["QuantityOfSales"].AllowDBNull = false;
+
+                detailsTable.Columns.Add("ExpiryDate", typeof(DateTime));
+                detailsTable.Columns["ExpiryDate"].AllowDBNull = true;
+
+                foreach (var d in dto.Details)
+                {
+                    detailsTable.Rows.Add(
+                        d.SuppliesProductId ?? 0,   // NOT NULL 欄位 → 預設 0
+                        d.QuantityOfSales ?? 0,     // NOT NULL 欄位 → 預設 0
+                        d.ExpiryDate?.Date ?? (object)DBNull.Value
+                    );
+                }
+
+                // SQL 參數
+                var parameters = new[]
+                {
+            new SqlParameter("@CustomerName", dto.CustomerName ?? (object)DBNull.Value),
+            new SqlParameter("@OrderDate", dto.OrderDate ?? (object)DBNull.Value),
+            new SqlParameter("@ReceivedDate", dto.ReceivedDate ?? (object)DBNull.Value),
+            new SqlParameter("@OrderStatus", dto.OrderStatus ?? (object)DBNull.Value),
+            new SqlParameter("@SalesOrderDetails", detailsTable)
+            {
+                SqlDbType = SqlDbType.Structured,
+                TypeName = "dbo.TVP_SalesOrderDetail"
+            },
+            new SqlParameter("@UpdateStock", SqlDbType.Bit) { Value = 0 } // 新增訂單時不扣庫存，一定要利用SqlDbType.Bit來綁型別，不然會被當作int處理
+        };
+
+                await _context.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_CreateSalesOrder @CustomerName, @OrderDate, @ReceivedDate, @OrderStatus, @SalesOrderDetails, @UpdateStock",
+                    parameters
+                );
+
+                return Ok(new { Message = "Order created successfully" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    Error = ex.Message,
+                    Inner = ex.InnerException?.Message,
+                    Stack = ex.StackTrace
+                });
+            }
         }
 
         // DELETE: api/SuppliesSalesOrders/5
