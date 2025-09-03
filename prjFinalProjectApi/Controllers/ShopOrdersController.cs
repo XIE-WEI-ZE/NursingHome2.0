@@ -16,75 +16,161 @@ namespace prjFinalProjectApi.Controllers
             _context = context;
         }
 
-        // 建立訂單
-        [HttpPost]
-        public async Task<IActionResult> CreateOrder([FromBody] OrderDto dto)
+        /// <summary>
+        /// 會員的訂單清單（分頁 + 訂單編號關鍵字）
+        /// GET /api/ShopOrders/member/{memberId}?page=1&pageSize=10&keyword=ORD-2025
+        /// </summary>
+        [HttpGet("member/{memberId:int}")]
+        [ProducesResponseType(typeof(PagedResult<OrderListItemDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetMemberOrders(
+            int memberId,
+            int page = 1,
+            int pageSize = 10,
+            string? keyword = null)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            if (page <= 0) page = 1;
+            if (pageSize <= 0 || pageSize > 100) pageSize = 10;
 
-            if (dto == null || dto.OrderDetails == null || !dto.OrderDetails.Any())
-                return BadRequest("訂單資料不完整");
+            var q = _context.ShopOrders
+                            .AsNoTracking()
+                            .Where(o => o.FMemberId == memberId);
 
-            // 產生訂單編號
-            string orderNo = await GenerateOrderNo();
+            if (!string.IsNullOrWhiteSpace(keyword))
+                q = q.Where(o => o.OrderNo != null && o.OrderNo.Contains(keyword));
 
-            var order = new ShopOrder
+            var total = await q.CountAsync();
+
+            var items = await q.OrderByDescending(o => o.OrderTime)
+                               .Skip((page - 1) * pageSize)
+                               .Take(pageSize)
+                               .Select(o => new OrderListItemDto
+                               {
+                                   OrderId = o.OrderId,
+                                   OrderNo = o.OrderNo ?? string.Empty,
+                                   OrderTime = o.OrderTime,
+                                   TotalAmount = o.TotalAmount ?? 0,   // 防止 int? -> int
+                                   Status = o.Status ?? string.Empty
+                               })
+                               .ToListAsync();
+
+            var result = new PagedResult<OrderListItemDto>
             {
-                FMemberId = dto.MemberId,
-                BuyerName = dto.BuyerName,
-                ReceiverName = dto.ReceiverName,
-                ReceiverPhone = dto.ReceiverPhone,
-                PaymentMethod = dto.PaymentMethod,
-                DeliveryMethod = dto.DeliveryMethod,
-                DeliveryAddress = dto.DeliveryAddress,
-                InvoiceTitle = dto.InvoiceTitle,
-                InvoiceTax = dto.InvoiceTax,
-                InvoiceInMethod = dto.InvoiceType,
-                CarrierNumber = dto.CarrierNumber,
-                OrderTime = DateTime.Now,
-                TotalAmount = dto.TotalAmount,
-                Note = dto.Note,
-                Status = "未付款", // 預設狀態
-                OrderNo = orderNo
+                Page = page,
+                PageSize = pageSize,
+                TotalCount = total,
+                Items = items
             };
-
-            _context.ShopOrders.Add(order);
-            await _context.SaveChangesAsync();
-
-            // 儲存訂單明細
-            foreach (var d in dto.OrderDetails)
-            {
-                var detail = new ShopOrderDetail
-                {
-                    OrderId = order.OrderId,
-                    ProductId = d.ProductId,
-                    ProductName = d.ProductName,
-                    Quantity = d.Quantity,
-                    UnitPrice = d.UnitPrice,
-                    Subtotal = d.Subtotal,
-                    Discount = 0
-                };
-                _context.ShopOrderDetails.Add(detail);
-            }
-
-            await _context.SaveChangesAsync();
-
-            return Ok(new { success = true, orderNo = orderNo, orderId = order.OrderId });
+            return Ok(result);
         }
 
-        // 訂單編號生成：ORD-YYYYMMDD-0001
-        private async Task<string> GenerateOrderNo()
+        /// <summary>
+        /// 會員單筆訂單（含明細）
+        /// GET /api/ShopOrders/member/{memberId}/{orderId}
+        /// </summary>
+        [HttpGet("member/{memberId:int}/{orderId:long}")]
+        [ProducesResponseType(typeof(OrderViewDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetMemberOrderById(int memberId, long orderId)
         {
-            string today = DateTime.Now.ToString("yyyyMMdd");
-            string prefix = $"ORD-{today}-";
+            // 先查主檔
+            var order = await _context.ShopOrders
+                .AsNoTracking()
+                .Where(o => o.OrderId == orderId && o.FMemberId == memberId)
+                .Select(o => new OrderViewDto
+                {
+                    OrderId = o.OrderId,
+                    OrderNo = o.OrderNo ?? string.Empty,
+                    OrderTime = o.OrderTime,
+                    BuyerName = o.BuyerName,
+                    ReceiverName = o.ReceiverName,
+                    ReceiverPhone = o.ReceiverPhone,
+                    PaymentMethod = o.PaymentMethod,
+                    DeliveryMethod = o.DeliveryMethod,
+                    DeliveryAddress = o.DeliveryAddress,
+                    InvoiceTitle = o.InvoiceTitle,
+                    InvoiceTax = o.InvoiceTax,
+                    InvoiceInMethod = o.InvoiceInMethod,
+                    CarrierNumber = o.CarrierNumber,
+                    Note = o.Note,
+                    Status = o.Status,
+                    TotalAmount = o.TotalAmount ?? 0,
+                    Details = new List<OrderDetailViewDto>() // 後面補
+                })
+                .FirstOrDefaultAsync();
 
-            int countToday = await _context.ShopOrders
-                .Where(o => o.OrderTime.Date == DateTime.Today)
-                .CountAsync();
+            if (order == null) return NotFound();
 
-            string orderNo = prefix + (countToday + 1).ToString("D4");
-            return orderNo;
+            // 再查明細
+            order.Details = await _context.ShopOrderDetails
+                .AsNoTracking()
+                .Where(d => d.OrderId == orderId)
+                .Select(d => new OrderDetailViewDto
+                {
+                    DetailId = d.DetailId,
+                    ProductId = d.ProductId,
+                    ProductName = d.ProductName ?? string.Empty,
+                    Quantity = d.Quantity,
+                    UnitPrice = d.UnitPrice,
+                    Subtotal = d.Subtotal
+                })
+                .ToListAsync();
+
+            return Ok(order);
+        }
+
+        /// <summary>
+        /// 會員單筆訂單（依訂單編號，含明細）
+        /// GET /api/ShopOrders/member/{memberId}/by-no/{orderNo}
+        /// </summary>
+        [HttpGet("member/{memberId:int}/by-no/{orderNo}")]
+        [ProducesResponseType(typeof(OrderViewDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetMemberOrderByNo(int memberId, string orderNo)
+        {
+            // 先查主檔
+            var order = await _context.ShopOrders
+                .AsNoTracking()
+                .Where(o => o.FMemberId == memberId && o.OrderNo == orderNo)
+                .Select(o => new OrderViewDto
+                {
+                    OrderId = o.OrderId,
+                    OrderNo = o.OrderNo ?? string.Empty,
+                    OrderTime = o.OrderTime,
+                    BuyerName = o.BuyerName,
+                    ReceiverName = o.ReceiverName,
+                    ReceiverPhone = o.ReceiverPhone,
+                    PaymentMethod = o.PaymentMethod,
+                    DeliveryMethod = o.DeliveryMethod,
+                    DeliveryAddress = o.DeliveryAddress,
+                    InvoiceTitle = o.InvoiceTitle,
+                    InvoiceTax = o.InvoiceTax,
+                    InvoiceInMethod = o.InvoiceInMethod,
+                    CarrierNumber = o.CarrierNumber,
+                    Note = o.Note,
+                    Status = o.Status,
+                    TotalAmount = o.TotalAmount ?? 0,
+                    Details = new List<OrderDetailViewDto>()
+                })
+                .FirstOrDefaultAsync();
+
+            if (order == null) return NotFound();
+
+            // 再查明細
+            order.Details = await _context.ShopOrderDetails
+                .AsNoTracking()
+                .Where(d => d.OrderId == order.OrderId)
+                .Select(d => new OrderDetailViewDto
+                {
+                    DetailId = d.DetailId,
+                    ProductId = d.ProductId,
+                    ProductName = d.ProductName ?? string.Empty,
+                    Quantity = d.Quantity,
+                    UnitPrice = d.UnitPrice,
+                    Subtotal = d.Subtotal
+                })
+                .ToListAsync();
+
+            return Ok(order);
         }
     }
 }
