@@ -7,6 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="wwwroot\images\communit\**" />
+    <Content Remove="wwwroot\images\communit\**" />
+    <EmbeddedResource Remove="wwwroot\images\communit\**" />
+    <None Remove="wwwroot\images\communit\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Google.Apis.Auth" Version="1.70.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="9.0.8" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.8" />
@@ -31,6 +38,8 @@
   <ItemGroup>
 
     <Folder Include="wwwroot\images\community\board\" />
+
+    <Folder Include="wwwroot\images\community\userprofiles\" />
     <Folder Include="wwwroot\images\community\post\" />
 
     <Folder Include="wwwroot\images\members\" />

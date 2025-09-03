@@ -2,7 +2,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
-using prjFinalProjectApi.Models.Dto;
 using prjFinalProjectApi.Services;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -22,7 +21,7 @@ namespace prjFinalProjectApi.Controllers
 
     [ApiController]
     [Route("api/[controller]")]
-    [EnableCors("AllowAll")]
+    [EnableCors("AllowWeb")] // 修正：與 Program.cs 一致
     public class ChatController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
@@ -34,7 +33,7 @@ namespace prjFinalProjectApi.Controllers
             _aiService = aiService;
         }
 
-        // 🔹 取得或建立私人聊天室
+        // 取得或建立私人聊天室
         [HttpGet("private-room/{myId}/{friendId}")]
         public async Task<IActionResult> GetOrCreatePrivateRoom(int myId, int friendId)
         {
@@ -59,16 +58,24 @@ namespace prjFinalProjectApi.Controllers
 
                 _context.CommunityChatRoomMembers.AddRange(new[]
                 {
-                    new CommunityChatRoomMember { RoomId = room.RoomId, MemberId = myId, JoinedAt = DateTime.Now },
-                    new CommunityChatRoomMember { RoomId = room.RoomId, MemberId = friendId, JoinedAt = DateTime.Now }
-                });
+            new CommunityChatRoomMember { RoomId = room.RoomId, MemberId = myId, JoinedAt = DateTime.Now },
+            new CommunityChatRoomMember { RoomId = room.RoomId, MemberId = friendId, JoinedAt = DateTime.Now }
+        });
                 await _context.SaveChangesAsync();
             }
+
+            // 取得好友的名稱
+            var friendName = await _context.Members
+                .Where(m => m.FMemberId == friendId)
+                .Select(m => m.FName)
+                .FirstOrDefaultAsync();
 
             return Ok(new
             {
                 roomId = room.RoomId,
-                roomName = room.RoomName,
+                roomName = friendName ?? "未知用戶", // 使用好友名稱作為聊天室名稱
+                friendId = friendId,
+                friendName = friendName,
                 members = await _context.CommunityChatRoomMembers
                     .Where(m => m.RoomId == room.RoomId)
                     .Select(m => new { memberId = m.MemberId })
@@ -76,7 +83,8 @@ namespace prjFinalProjectApi.Controllers
             });
         }
 
-        // 🔹 取得使用者所有私人聊天室
+
+        // 取得使用者所有私人聊天室
         [HttpGet("private-rooms/{userId}")]
         public async Task<IActionResult> GetPrivateRooms(int userId)
         {
@@ -86,13 +94,31 @@ namespace prjFinalProjectApi.Controllers
                                select new
                                {
                                    roomId = r.RoomId,
-                                   roomName = r.RoomName
+                                   roomName = r.RoomName,
+                                   members = _context.CommunityChatRoomMembers
+                                           .Where(rm => rm.RoomId == r.RoomId && rm.MemberId != userId)
+                                           .Select(rm => new {
+                                               memberId = rm.MemberId,
+                                               memberName = _context.Members
+                                                          .Where(cm => cm.FMemberId == rm.MemberId)
+                                                          .Select(cm => cm.FName)
+                                                          .FirstOrDefault()
+                                           })
+                                           .ToList()
                                }).ToListAsync();
 
-            return Ok(rooms);
+            var result = rooms.Select(r => new
+            {
+                roomId = r.roomId,
+                roomName = r.members.FirstOrDefault()?.memberName ?? "未知用戶", // 使用對方的名稱
+                friendId = r.members.FirstOrDefault()?.memberId,
+                friendName = r.members.FirstOrDefault()?.memberName
+            }).ToList();
+
+            return Ok(result);
         }
 
-        // 🔹 取得歷史訊息
+        // 取得歷史訊息
         [HttpGet("{roomId}/messages")]
         public async Task<IActionResult> GetMessages(int roomId)
         {
@@ -111,7 +137,7 @@ namespace prjFinalProjectApi.Controllers
             return Ok(messages);
         }
 
-        // 🔹 AI 聊天 (使用 IAIService)
+        // AI 聊天 (使用 IAIService)
         [HttpPost("ai-chat")]
         public async Task<IActionResult> AIChat([FromBody] AIChatRequest request)
         {
