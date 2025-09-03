@@ -280,6 +280,55 @@ namespace prjFinalProjectApi.Controllers
             return Ok(items);
         }
 
+        //活動取消 將狀態改為0
+        [HttpPut("cancel")]
+        public async Task<IActionResult> Cancel([FromBody] CancelRegistrationDto dto)
+        {
+            if (dto is null) return BadRequest(new { message = "payload required" });
+            if (dto.MemberId <= 0 || dto.EventBatchId <= 0)
+                return BadRequest(new { message = "MemberId 與 EventBatchId 為必填且需大於 0" });
+
+            // 找「最新一筆」該會員在該批次的報名
+            var reg = await _db.RegistrationDetails
+                .Where(r => r.MemberId == dto.MemberId && r.EventBatchId == dto.EventBatchId)
+                .OrderByDescending(r => r.RegistrationDateTime) // 先比時間
+                .ThenByDescending(r => r.RegistrationId)        // 再比流水，防止 null 或同秒
+                .FirstOrDefaultAsync();
+
+            if (reg == null)
+                return NotFound(new { message = $"找不到會員 {dto.MemberId} 在批次 {dto.EventBatchId} 的報名紀錄" });
+
+            // 已取消就不重複動作
+            if (reg.CurrentStatus == 0)
+            {
+                return Ok(new
+                {
+                    message = "該報名已是取消狀態（CurrentStatus=0）",
+                    registrationId = reg.RegistrationId,
+                    registrationNum = reg.RegistrationNum,
+                    currentStatus = reg.CurrentStatus
+                });
+            }
+
+            // 寫入取消
+            reg.CurrentStatus = 0; // 0=取消
+            // 可選：附註取消原因與時間戳
+            var stamp = $"[cancel {DateTime.Now:yyyy-MM-dd HH:mm:ss}]";
+            reg.InternalRemarks = string.IsNullOrWhiteSpace(reg.InternalRemarks)
+                ? $"{stamp} {dto.Reason}".Trim()
+                : $"{reg.InternalRemarks} | {stamp} {dto.Reason}".Trim();
+
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "取消成功",
+                registrationId = reg.RegistrationId,
+                registrationNum = reg.RegistrationNum,
+                currentStatus = reg.CurrentStatus
+            });
+        }
+
     }
 }
 

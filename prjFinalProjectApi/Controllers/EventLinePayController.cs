@@ -208,6 +208,7 @@ namespace prjFinalProjectApi.Controllers
             var safeTxId = (transactionId ?? "").Replace("'", "\\'");
             var safeMsg = JsonSerializer.Serialize(msg); // 讓字串安全進 JS
 
+
             var html = $@"<!doctype html>
                         <meta charset='utf-8'>
                         <title>LINE Pay</title>
