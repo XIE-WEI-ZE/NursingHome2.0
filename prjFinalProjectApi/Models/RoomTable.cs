@@ -1,6 +1,6 @@
-﻿// prjFinalProjectApi/Models/RoomTable.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace prjFinalProjectApi.Models
 {
@@ -14,7 +14,8 @@ namespace prjFinalProjectApi.Models
         public bool? FRoomType { get; set; }
         public int? FBedCount { get; set; }
         public string? FRoomStatus { get; set; }
-        public DateTime? LastUpdated { get; set; }
+        [Column("fLastUpdated")]
+        public DateTime? FLastUpdated { get; set; }
         public virtual ICollection<RoomBed> RoomBeds { get; set; }
         public virtual ICollection<RoomImage> RoomImages { get; set; }
 

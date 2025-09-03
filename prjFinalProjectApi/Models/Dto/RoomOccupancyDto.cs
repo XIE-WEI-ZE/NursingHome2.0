@@ -4,11 +4,14 @@ namespace prjFinalProjectApi.Models.Dto
 {
     public class RoomOccupancyDto
     {
+        [Required]
+        public int FRoomId { get; set; } // 新增: 傳房間 ID，後端隨機選床位
         public int FOccupancyId { get; set; } // 可選，由後端生成
         [Required]
         public int FBedId { get; set; } // 對應 RoomOccupancy 的 FBedId
         [Required]
         public DateTime FCheckInDate { get; set; } // 移除 null 可能性
+
         [Required]
         public int FBillingAmount { get; set; }
         [Required]

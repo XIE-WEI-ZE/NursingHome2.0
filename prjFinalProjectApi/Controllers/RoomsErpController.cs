@@ -1,6 +1,4 @@
-﻿// prjFinalProjectApi/Controllers/RoomsErpController.cs
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
@@ -9,13 +7,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore; // 確保導入 EF Core
 
 namespace prjFinalProjectApi.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    //[Authorize] // 限制為登入用戶或後台角色
     public class RoomsErpController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
@@ -28,7 +24,6 @@ namespace prjFinalProjectApi.Controllers
         }
 
         // GET: api/RoomsErp
-        // prjFinalProjectApi/Controllers/RoomsErpController.cs
         [HttpGet]
         public async Task<IActionResult> GetRooms()
         {
@@ -36,6 +31,7 @@ namespace prjFinalProjectApi.Controllers
             {
                 var rooms = await _context.RoomTables
                     .Include(r => r.RoomBeds)
+                    .ThenInclude(b => b.RoomOccupancies)
                     .Include(r => r.RoomImages)
                     .Where(r => r.FRoomId > 0)
                     .Select(r => new
@@ -47,35 +43,29 @@ namespace prjFinalProjectApi.Controllers
                         fRoomDescription = r.FRoomDescription ?? "",
                         fRoomPrice = r.FRoomPrice ?? 0,
                         fBedCount = r.FBedCount ?? 0,
-                        isAvailable = r.RoomBeds.Any(b => b.FBedStatus ?? false),
-                        availableBeds = r.RoomBeds.Count(b => b.FBedStatus ?? false),
+                        isAvailable = r.RoomBeds.Any(b => !(b.FBedStatus ?? false)),
+                        availableBeds = r.RoomBeds.Count(b => !(b.FBedStatus ?? false)),
                         image = r.RoomImages.Where(i => !string.IsNullOrEmpty(i.ImagePath)).Select(i => i.ImagePath).FirstOrDefault() ?? "rooms/default-room-image.jpg",
-                        fRoomStatus = r.FRoomStatus ?? "active",
+                        fRoomStatus = r.FRoomStatus.Trim(),
                         fRoomType = r.FRoomType ?? false,
-                        // 臨時移除 LastUpdated，直到資料庫同步
-                        lastUpdated = r.LastUpdated ?? DateTime.UtcNow
+                        lastUpdated = r.FLastUpdated,
+                        occupiedInfo = (from b in r.RoomBeds
+                                        from o in b.RoomOccupancies
+                                        where o.FCheckOutDate == null && o.FMemberId.HasValue
+                                        join m in _context.Members on o.FMemberId equals m.FMemberId into members
+                                        from m in members.DefaultIfEmpty()
+                                        select new
+                                        {
+                                            memberName = m != null ? m.FName ?? "未知" : "未知",
+                                            phone = m != null ? m.FPhone ?? "無" : "無",
+                                            bedCode = b.FBedCode,
+                                            fOccupancyId = o.FOccupancyId,
+                                            fCheckInDate = o.FCheckInDate != null ? o.FCheckInDate.Value.ToString("yyyy-MM-dd HH:mm:ss") : null
+                                        }).ToList()
                     })
                     .ToListAsync();
 
-                var formattedRooms = rooms.Select(r => new
-                {
-                    r.fRoomId,
-                    r.fRoomName,
-                    r.fRoomAlias,
-                    r.images,
-                    r.fRoomDescription,
-                    r.fRoomPrice,
-                    r.fBedCount,
-                    r.isAvailable,
-                    r.availableBeds,
-                    r.image,
-                    r.fRoomStatus,
-                    r.fRoomType,
-                    // 臨時使用當前時間
-                    lastUpdated = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                }).ToList();
-
-                return Ok(new { message = "Success", data = formattedRooms });
+                return Ok(new { message = "成功獲取房間列表", data = rooms });
             }
             catch (Exception ex)
             {
@@ -84,240 +74,252 @@ namespace prjFinalProjectApi.Controllers
             }
         }
 
-        // POST: api/RoomsErp
+        // POST: api/RoomsErp - 新增房間
         [HttpPost]
         public async Task<IActionResult> CreateRoom([FromForm] UpdateRoomERPDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(new { message = "輸入數據無效", errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
+            }
+
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
                 var room = new RoomTable
                 {
-                    FRoomAlias = dto.FRoomAlias ?? "",
-                    FRoomDescription = dto.FRoomDescription ?? "",
+                    FRoomName = dto.FRoomName,
+                    FRoomAlias = dto.FRoomAlias,
+                    FRoomDescription = dto.FRoomDescription,
                     FRoomPrice = dto.FRoomPrice,
+                    FBedCount = dto.FBedCount,
                     FRoomType = dto.FRoomType,
                     FRoomStatus = dto.FRoomStatus,
-                    LastUpdated = DateTime.UtcNow
+                    FLastUpdated = DateTime.Now
                 };
 
                 _context.RoomTables.Add(room);
                 await _context.SaveChangesAsync();
 
-                for (int i = 1; i <= dto.FBedCount; i++)
+                // 處理圖片
+                if (dto.RoomImages != null && dto.RoomImages.Length > 0)
                 {
-                    var bed = new RoomBed
+                    foreach (var image in dto.RoomImages)
                     {
-                        FRoomId = room.FRoomId,
-                        FBedCode = $"Bed-{i}",
-                        FBedStatus = true
-                    };
-                    _context.RoomBeds.Add(bed);
-                }
+                        var fileName = $"{Guid.NewGuid()}_{image.FileName}";
+                        var filePath = Path.Combine("wwwroot/images/rooms", fileName);
+                        using (var stream = new FileStream(filePath, FileMode.Create))
+                        {
+                            await image.CopyToAsync(stream);
+                        }
 
-                if (dto.RoomImage != null)
-                {
-                    var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/images/rooms");
-                    if (!Directory.Exists(uploadsFolder))
-                    {
-                        Directory.CreateDirectory(uploadsFolder);
+                        _context.RoomImages.Add(new RoomImage
+                        {
+                            FRoomId = room.FRoomId,
+                            ImagePath = $"rooms/{fileName}"
+                        });
                     }
-
-                    var uniqueFileName = Guid.NewGuid().ToString() + "_" + dto.RoomImage.FileName;
-                    var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-                    using (var stream = new FileStream(filePath, FileMode.Create))
-                    {
-                        await dto.RoomImage.CopyToAsync(stream);
-                    }
-
-                    var roomImage = new RoomImage
-                    {
-                        FRoomId = room.FRoomId,
-                        ImagePath = $"/images/rooms/{uniqueFileName}"
-                    };
-                    _context.RoomImages.Add(roomImage);
+                    await _context.SaveChangesAsync();
                 }
-
-                await _context.SaveChangesAsync();
 
                 return Ok(new { message = "房間新增成功", roomId = room.FRoomId });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CreateRoom 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+                Console.WriteLine($"CreateRoom 錯誤: {ex.Message}");
+                return StatusCode(500, new { message = "新增房間失敗", error = ex.Message });
             }
         }
 
-        // PUT: api/RoomsErp/{id}
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateRoom(int id, [FromForm] UpdateRoomERPDto dto)
+        // PUT: api/RoomsErp/{roomId} - 更新房間
+        [HttpPut("{roomId}")]
+        public async Task<IActionResult> UpdateRoom(int roomId, [FromForm] UpdateRoomERPDto dto)
         {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(new { message = "輸入數據無效", errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
+            }
+
             try
             {
-                if (id != dto.FRoomId)
-                {
-                    return BadRequest(new { message = "ID 不匹配" });
-                }
-
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var room = await _context.RoomTables
-                    .Include(r => r.RoomBeds)
-                    .Include(r => r.RoomImages)
-                    .FirstOrDefaultAsync(r => r.FRoomId == id);
-
+                var room = await _context.RoomTables.FindAsync(roomId);
                 if (room == null)
                 {
                     return NotFound(new { message = "房間不存在" });
                 }
 
-                room.FRoomAlias = dto.FRoomAlias ?? "";
-                room.FRoomDescription = dto.FRoomDescription ?? "";
+                room.FRoomName = dto.FRoomName;
+                room.FRoomAlias = dto.FRoomAlias;
+                room.FRoomDescription = dto.FRoomDescription;
                 room.FRoomPrice = dto.FRoomPrice;
+                room.FBedCount = dto.FBedCount;
                 room.FRoomType = dto.FRoomType;
                 room.FRoomStatus = dto.FRoomStatus;
-                room.LastUpdated = DateTime.UtcNow;
+                room.FLastUpdated = DateTime.Now;
 
-                int currentBedCount = room.RoomBeds.Count();
-                if (dto.FBedCount != currentBedCount)
+                // 處理新圖片
+                if (dto.RoomImages != null && dto.RoomImages.Length > 0)
                 {
-                    if (dto.FBedCount > currentBedCount)
+                    foreach (var image in dto.RoomImages)
                     {
-                        for (int i = currentBedCount + 1; i <= dto.FBedCount; i++)
+                        var fileName = $"{Guid.NewGuid()}_{image.FileName}";
+                        var filePath = Path.Combine("wwwroot/images/rooms", fileName);
+                        using (var stream = new FileStream(filePath, FileMode.Create))
                         {
-                            var bed = new RoomBed
-                            {
-                                FRoomId = room.FRoomId,
-                                FBedCode = $"Bed-{i}",
-                                FBedStatus = true
-                            };
-                            _context.RoomBeds.Add(bed);
+                            await image.CopyToAsync(stream);
                         }
-                    }
-                    else
-                    {
-                        var bedsToRemove = room.RoomBeds.Skip(dto.FBedCount).ToList();
-                        _context.RoomBeds.RemoveRange(bedsToRemove);
+
+                        _context.RoomImages.Add(new RoomImage
+                        {
+                            FRoomId = room.FRoomId,
+                            ImagePath = $"rooms/{fileName}"
+                        });
                     }
                 }
 
-                if (dto.RoomImage != null)
+                // 僅在明確傳入 existingImages 且包含有效圖片路徑時處理刪除
+                if (dto.ExistingImages != null && dto.ExistingImages.Any(img => !string.IsNullOrEmpty(img)))
                 {
-                    var existingImage = room.RoomImages.FirstOrDefault();
-                    if (existingImage != null)
+                    Console.WriteLine($"Received existingImages: {string.Join(", ", dto.ExistingImages)}");
+                    var existingImages = await _context.RoomImages.Where(i => i.FRoomId == roomId).ToListAsync();
+                    foreach (var img in existingImages)
                     {
-                        var oldFilePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", existingImage.ImagePath.TrimStart('/'));
-                        if (System.IO.File.Exists(oldFilePath))
+                        if (!dto.ExistingImages.Contains(img.ImagePath))
                         {
-                            System.IO.File.Delete(oldFilePath);
+                            Console.WriteLine($"Deleting image: {img.ImagePath}");
+                            _context.RoomImages.Remove(img);
+                            var filePath = Path.Combine("wwwroot", img.ImagePath ?? "");
+                            if (System.IO.File.Exists(filePath))
+                            {
+                                System.IO.File.Delete(filePath);
+                            }
                         }
-                        _context.RoomImages.Remove(existingImage);
                     }
-
-                    var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/images/rooms");
-                    var uniqueFileName = Guid.NewGuid().ToString() + "_" + dto.RoomImage.FileName;
-                    var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-                    using (var stream = new FileStream(filePath, FileMode.Create))
-                    {
-                        await dto.RoomImage.CopyToAsync(stream);
-                    }
-
-                    var newImage = new RoomImage
-                    {
-                        FRoomId = room.FRoomId,
-                        ImagePath = $"/images/rooms/{uniqueFileName}"
-                    };
-                    _context.RoomImages.Add(newImage);
+                }
+                else
+                {
+                    Console.WriteLine("No valid existingImages provided or empty, skipping image deletion");
                 }
 
                 await _context.SaveChangesAsync();
-
                 return Ok(new { message = "房間更新成功" });
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"UpdateRoom 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+                return StatusCode(500, new { message = "更新房間失敗", error = ex.Message });
             }
         }
 
-        // PATCH: api/RoomsErp/{id}/status
-        [HttpPatch("{id}/status")]
-        public async Task<IActionResult> ToggleRoomStatus(int id, [FromBody] string? status)
+        // DELETE: api/RoomsErp/{roomId} - 刪除房間
+        [HttpDelete("{roomId}")]
+        public async Task<IActionResult> DeleteRoom(int roomId)
         {
             try
             {
-                if (string.IsNullOrEmpty(status))
-                {
-                    return BadRequest(new { message = "狀態不可為空" });
-                }
-
-                var room = await _context.RoomTables.FindAsync(id);
+                var room = await _context.RoomTables.FindAsync(roomId);
                 if (room == null)
                 {
                     return NotFound(new { message = "房間不存在" });
                 }
 
-                room.FRoomStatus = status;
-                room.LastUpdated = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-
-                return Ok(new { message = "狀態更新成功" });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"ToggleRoomStatus 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
-            }
-        }
-
-        // DELETE: api/RoomsErp/{id}
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteRoom(int id)
-        {
-            try
-            {
-                var room = await _context.RoomTables
-                    .Include(r => r.RoomBeds)
-                    .Include(r => r.RoomImages)
-                    .FirstOrDefaultAsync(r => r.FRoomId == id);
-
-                if (room == null)
+                // 刪除相關圖片
+                var images = await _context.RoomImages.Where(i => i.FRoomId == roomId).ToListAsync();
+                foreach (var img in images)
                 {
-                    return NotFound(new { message = "房間不存在" });
-                }
-
-                foreach (var image in room.RoomImages)
-                {
-                    var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", image.ImagePath.TrimStart('/'));
+                    var filePath = Path.Combine("wwwroot", img.ImagePath ?? "");
                     if (System.IO.File.Exists(filePath))
                     {
                         System.IO.File.Delete(filePath);
                     }
                 }
+                _context.RoomImages.RemoveRange(images);
 
-                _context.RoomImages.RemoveRange(room.RoomImages);
-                _context.RoomBeds.RemoveRange(room.RoomBeds);
+                // 刪除相關床位
+                var beds = await _context.RoomBeds.Where(b => b.FRoomId == roomId).ToListAsync();
+                _context.RoomBeds.RemoveRange(beds);
+
+                // 刪除相關入住記錄
+                var occupancies = await _context.RoomOccupancies.Where(o => o.FBedId.HasValue && beds.Select(b => b.FBedId).Contains(o.FBedId.Value)).ToListAsync();
+                _context.RoomOccupancies.RemoveRange(occupancies);
+
                 _context.RoomTables.Remove(room);
-
                 await _context.SaveChangesAsync();
-
                 return Ok(new { message = "房間刪除成功" });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DeleteRoom 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
-                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+                Console.WriteLine($"DeleteRoom 錯誤: {ex.Message}");
+                return StatusCode(500, new { message = "刪除房間失敗", error = ex.Message });
+            }
+        }
+
+        // PATCH: api/RoomsErp/{roomId}/status - 上/下架
+        [HttpPatch("{roomId}/status")]
+        public async Task<IActionResult> ToggleRoomStatus(int roomId, [FromBody] string newStatus)
+        {
+            if (string.IsNullOrEmpty(newStatus) || (newStatus != "active" && newStatus != "vacant"))
+            {
+                return BadRequest(new { message = "無效的狀態值" });
+            }
+
+            try
+            {
+                var room = await _context.RoomTables.FindAsync(roomId);
+                if (room == null)
+                {
+                    return NotFound(new { message = "房間不存在" });
+                }
+
+                room.FRoomStatus = newStatus;
+                room.FLastUpdated = DateTime.Now;
+
+                await _context.SaveChangesAsync();
+                return Ok(new { message = "狀態更新成功" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ToggleRoomStatus 錯誤: {ex.Message}");
+                return StatusCode(500, new { message = "狀態更新失敗", error = ex.Message });
+            }
+        }
+
+        // POST: api/RoomsErp/checkout - 離院
+        [HttpPost("checkout")]
+        public async Task<IActionResult> CheckoutOccupancies([FromBody] List<int> occupancyIds)
+        {
+            if (occupancyIds == null || occupancyIds.Count == 0)
+            {
+                return BadRequest(new { message = "無有效的入住記錄 ID" });
+            }
+
+            try
+            {
+                foreach (var id in occupancyIds)
+                {
+                    var occupancy = await _context.RoomOccupancies.FindAsync(id);
+                    if (occupancy != null && occupancy.FCheckOutDate == null)
+                    {
+                        occupancy.FCheckOutDate = DateTime.Now;
+                        occupancy.FBedId = null;
+
+                        if (occupancy.FBedId.HasValue)
+                        {
+                            var bed = await _context.RoomBeds.FindAsync(occupancy.FBedId.Value);
+                            if (bed != null)
+                            {
+                                bed.FBedStatus = false;
+                            }
+                        }
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+                return Ok(new { message = "離院成功" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Checkout 錯誤: {ex.Message}");
+                return StatusCode(500, new { message = "離院失敗", error = ex.Message });
             }
         }
     }
