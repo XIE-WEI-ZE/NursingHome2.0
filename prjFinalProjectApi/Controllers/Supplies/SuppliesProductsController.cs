@@ -78,6 +78,51 @@ namespace prjFinalProjectApi.Controllers.Supplies
             return Ok(supplieslistDto);
         }
 
+        [HttpGet("search")]
+        public async Task<ActionResult<object>> SearchSuppliesProducts(
+        string? keyword = "",
+        int page = 1,
+        int pageSize = 10
+    )
+        {
+            var query = from p in _context.SuppliesProducts
+                        join s in _context.SuppliesSuppliers on p.SupplierId equals s.SuppliesSupplierId
+                        join c in _context.SuppliesCategories on p.SuppliesCategoryId equals c.SuppliesCategoryId
+                        select new SupplieslistDto
+                        {
+                            SuppliesProductID = p.SuppliesProductId,
+                            SuppliesProductName = p.SuppliesProductName,
+                            QuantityPerUnit = p.QuantityPerUnit,
+                            UnitsInStock = p.UnitsInStock,
+                            PricePerUnit = p.PricePerUnit,
+                            SupplierId = p.SupplierId,
+                            SuppliesSupplierName = s.SuppliesSupplierName,
+                            SuppliesCategoryId = p.SuppliesCategoryId,
+                            SuppliesCategoryName = c.SuppliesCategoryName,
+                            Exist = p.Exist
+                        };
+
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(p =>
+                    p.SuppliesProductName.Contains(keyword) ||
+                    p.SuppliesSupplierName.Contains(keyword) ||
+                    p.SuppliesCategoryName.Contains(keyword)
+                );
+            }
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+            var data = await query
+                .OrderByDescending(p => p.SuppliesProductID)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Ok(new { totalCount, totalPages, page, pageSize, data });
+        }
+
         // PUT: api/SuppliesProducts/5
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
         [HttpPut("{id}")]

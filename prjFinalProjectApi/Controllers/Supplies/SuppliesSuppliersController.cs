@@ -27,6 +27,54 @@ namespace prjFinalProjectApi.Controllers.Supplies
             return await _context.SuppliesSuppliers.ToListAsync();
         }
 
+        [HttpGet("search")]
+        public async Task<ActionResult<object>> SearchSuppliesSuppliers(
+        string? keyword = "",
+        bool? continued = null,
+        int page = 1,
+        int pageSize = 10
+)
+        {
+            var query = _context.SuppliesSuppliers.AsQueryable();
+
+            // 過濾條件：名稱、統編、聯絡人、地址、類別
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(s =>
+                    s.SuppliesSupplierName.Contains(keyword) ||
+                    s.SuppliesSupplierGui.Contains(keyword) ||
+                    s.ContactPerson.Contains(keyword) ||
+                    s.ContactNumber.Contains(keyword) ||
+                    s.Address.Contains(keyword) ||
+                    s.SupplierKeyword.Contains(keyword)
+                );
+            }
+
+            // 狀態過濾
+            if (continued.HasValue)
+            {
+                query = query.Where(s => s.Continued == continued.Value);
+            }
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+            var data = await query
+                .OrderByDescending(s => s.SuppliesSupplierId)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Ok(new
+            {
+                totalCount,
+                page,
+                pageSize,
+                totalPages,
+                data
+            });
+        }
+
         // GET: api/SuppliesSuppliers/5
         [HttpGet("{id}")]
         public async Task<ActionResult<SuppliesSupplier>> GetSuppliesSupplier(int id)
