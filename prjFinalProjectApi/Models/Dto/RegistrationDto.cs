@@ -32,4 +32,12 @@
         public string RegistrationNum { get; set; } = string.Empty; // REGyyyyMMddnnn
         public bool RequiresPayment { get; set; } // 供前端判斷是否顯示「去付款」
     }
+
+    //取消報名 前台給予欄位資料
+    public class CancelRegistrationDto
+    {
+        public int MemberId { get; set; }
+        public int EventBatchId { get; set; }
+        public string? Reason { get; set; } // 可選：取消原因，前台可傳
+    }
 }

@@ -6,8 +6,9 @@ namespace prjFinalProjectApi.Models;
 public partial class EventTemplate
 {
     public int EventId { get; set; }
-
     public string EventName { get; set; } = null!;
+
+    public string EventSlug { get; set; } = null!;
 
     public string Organizer { get; set; } = null!;
 

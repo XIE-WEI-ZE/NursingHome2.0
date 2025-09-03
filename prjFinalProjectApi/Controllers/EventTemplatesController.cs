@@ -22,6 +22,7 @@ public class EventTemplatesController : ControllerBase
             .Select(t => new
             {
                 t.EventId,
+                t.EventSlug,
                 t.EventName,
                 t.Organizer,
                 t.TargetAudience,
@@ -45,18 +46,30 @@ public class EventTemplatesController : ControllerBase
 
 
 
-                // 用 EventId 串接批次（沒有導覽屬性也可）
+                // 用 EventId 串接批次
                 EventBatches = _db.EventBatches
-                    .AsNoTracking()
-                    .Where(b => b.EventId == t.EventId)
-                    .OrderBy(b => b.BatchId)            // 需要可改成開始時間等
-                    .ToList()
+                .AsNoTracking()
+                .Where(b => b.EventId == t.EventId)
+                .OrderBy(b => b.BatchId)
+                .Select(b => new {
+                    b.BatchId,
+                    b.EventId,
+                    b.EventDateTimeStart,
+                    b.EventDateTimeEnd,
+                    b.RegistrationDateStart,
+                    b.RegistrationDateEnd,
+                    b.Status,
+                    // 前端列表直接拿來當連結
+                    CanonicalPath = $"{t.EventSlug}-{t.EventId}/b/{b.BatchId}"
+                })
+                .ToList()
             })
             .ToListAsync();
 
         return Ok(items);
     }
 
+    //URL 用 slug，但查詢用 id 最穩
     // GET /api/EventTemplate/by-batch/{batchId}
     [HttpGet("by-batch/{batchId:int}")]
     public async Task<IActionResult> GetByBatch(int batchId)
@@ -68,24 +81,24 @@ public class EventTemplatesController : ControllerBase
             .Select(b => new {
                 b.BatchId,
                 b.EventId,
-                b.EventDateTimeStart,
-                b.EventDateTimeEnd,
-                b.RegistrationDateStart,
-                b.RegistrationDateEnd,
-                b.Status,
-                b.Organizer,
-                b.TargetAudience,
-                b.ContactPersonId,
-                b.ContactPhone,
-                b.EventLocation,
-                b.Quota,
-                b.Description,
-                b.MedicalAid,
-                b.Amount,
-                b.CreatedAt,
-                b.CreatedBy,
-                b.LastModifiedAt,
-                b.LastModifiedBy
+                //b.EventDateTimeStart,
+                //b.EventDateTimeEnd,
+                //b.RegistrationDateStart,
+                //b.RegistrationDateEnd,
+                //b.Status,
+                //b.Organizer,
+                //b.TargetAudience,
+                //b.ContactPersonId,
+                //b.ContactPhone,
+                //b.EventLocation,
+                //b.Quota,
+                //b.Description,
+                //b.MedicalAid,
+                //b.Amount,
+                //b.CreatedAt,
+                //b.CreatedBy,
+                //b.LastModifiedAt,
+                //b.LastModifiedBy
             })
             .FirstOrDefaultAsync();
 
@@ -98,6 +111,7 @@ public class EventTemplatesController : ControllerBase
             .Select(t => new
             {
                 t.EventId,
+                t.EventSlug,
                 t.EventName,
                 t.Organizer,
                 t.TargetAudience,
@@ -148,11 +162,13 @@ public class EventTemplatesController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (template is null) return NotFound();
+        var canonicalPath = $"{template.EventSlug}-{template.EventId}/b/{chosen.BatchId}";
 
         // 合併回傳（多一個 SelectedBatch，方便前端直接用）
         return Ok(new
         {
             template.EventId,
+            template.EventSlug,
             template.EventName,
             template.Organizer,
             template.TargetAudience,
@@ -173,7 +189,6 @@ public class EventTemplatesController : ControllerBase
             template.DurationMinutes,
             template.CoverImageUrl,
             template.EventBatches,
-            SelectedBatch = chosen
         });
     }
 
