@@ -94,7 +94,7 @@ builder.Services.AddAuthorization(options =>
 
 // LLM 服務（Ollama）
 builder.Services.AddScoped<IAIService>(sp =>
-    new OllamaService(sp.GetRequiredService<HttpClient>(), "http://192.168.61.90:11434/api/generate"));
+    new OllamaService(sp.GetRequiredService<HttpClient>(), "https://myapp.tojing.dpdns.org/api/generate"));
 
 // ===== Swagger（開發期）=====
 builder.Services.AddEndpointsApiExplorer();
@@ -164,7 +164,8 @@ app.UseCors("AllowWeb");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapHub<ChatHub>("/chathub");
+app.MapHub<ChatHub>("/chathub"); // 一般聊天室
+app.MapHub<CustomerServiceHub>("/customerServiceHub"); // 客服專用
 app.MapControllers();
 
 
