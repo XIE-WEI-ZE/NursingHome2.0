@@ -181,6 +181,9 @@ public partial class DbNursingHomeContext : DbContext
 
     public virtual DbSet<EventCouponRule> EventCouponRules { get; set; }//amy
 
+    public virtual DbSet<RoomPaymentHistory> RoomPaymentHistories { get; set; }
+    public virtual DbSet<RoomPaymentReceipt> RoomPaymentReceipts { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 #warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
         => optionsBuilder.UseSqlServer("Data Source=.;Initial Catalog=dbNursingHome;Integrated Security=True;Encrypt=True;Trust Server Certificate=True");
@@ -1122,10 +1125,10 @@ public partial class DbNursingHomeContext : DbContext
 
             entity.Property(e => e.FOccupancyId).HasColumnName("fOccupancyId");
             entity.Property(e => e.FBedId).HasColumnName("fBedId");
-            entity.Property(e => e.FBillingAmount).HasColumnName("fBillingAmount");
-            entity.Property(e => e.FBillingDate)
-                .HasColumnType("datetime")
-                .HasColumnName("fBillingDate");
+            //entity.Property(e => e.FBillingAmount).HasColumnName("fBillingAmount");
+            //entity.Property(e => e.FBillingDate)
+            //    .HasColumnType("datetime")
+            //    .HasColumnName("fBillingDate");
             entity.Property(e => e.FBillingStatus).HasColumnName("fBillingStatus");
             entity.Property(e => e.FCheckInDate)
                 .HasColumnType("datetime")
@@ -1134,9 +1137,9 @@ public partial class DbNursingHomeContext : DbContext
                 .HasColumnType("datetime")
                 .HasColumnName("fCheckOutDate");
             entity.Property(e => e.FMemberId).HasColumnName("fMemberId");
-            entity.Property(e => e.FPaymentMethod)
-                .HasMaxLength(50)
-                .HasColumnName("fPaymentMethod");
+            //entity.Property(e => e.FPaymentMethod)
+            //    .HasMaxLength(50)
+            //    .HasColumnName("fPaymentMethod");
 
             entity.HasOne(d => d.FBed).WithMany(p => p.RoomOccupancies)
                 .HasForeignKey(d => d.FBedId)
@@ -1359,8 +1362,69 @@ public partial class DbNursingHomeContext : DbContext
             entity.Property(e => e.SuppliesProductId).HasColumnName("SuppliesProductID");
             entity.Property(e => e.TransferOrderId).HasColumnName("TransferOrderID");
         });
+        modelBuilder.Entity<RoomOccupancy>(entity =>
+        {
+            entity.HasKey(e => e.FOccupancyId).HasName("PK__RoomOccu__BAFC68F02950123F");
+            entity.ToTable("RoomOccupancy");
+            entity.Property(e => e.FOccupancyId).HasColumnName("fOccupancyId");
+            entity.Property(e => e.FBedId).HasColumnName("fBedId");
+            entity.Property(e => e.FBillingStatus).HasColumnName("fBillingStatus");
+            entity.Property(e => e.FCheckInDate)
+                .HasColumnType("datetime")
+                .HasColumnName("fCheckInDate");
+            entity.Property(e => e.FCheckOutDate)
+                .HasColumnType("datetime")
+                .HasColumnName("fCheckOutDate");
+            entity.Property(e => e.FMemberId).HasColumnName("fMemberId");
+            entity.HasOne(d => d.FBed).WithMany(p => p.RoomOccupancies)
+                .HasForeignKey(d => d.FBedId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__RoomOccup__fBedI__3EDC53F0");
+            // 新增: 一對多關係到 RoomPaymentHistory（如果尚未有）
+            entity.HasMany(e => e.RoomPaymentHistories)
+                .WithOne(p => p.FOccupancy)
+                .HasForeignKey(p => p.FOccupancyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RoomPaymentHistory>(entity =>
+        {
+            entity.HasKey(e => e.FPaymentId);  // 明確指定 FPaymentId 為主鍵
+            entity.ToTable("RoomPaymentHistory");
+            entity.Property(e => e.FPaymentId).HasColumnName("fPaymentId");
+            entity.Property(e => e.FOccupancyId).HasColumnName("fOccupancyId");
+            entity.Property(e => e.FBillingAmount).HasColumnName("fBillingAmount");
+            entity.Property(e => e.FBillingDate).HasColumnType("datetime").HasColumnName("fBillingDate");
+            entity.Property(e => e.FPaymentMethod).HasMaxLength(50).HasColumnName("fPaymentMethod");
+            entity.Property(e => e.FBillingStatus).HasColumnName("fBillingStatus");
+            entity.Property(e => e.FPaypalOrderId).HasColumnName("fPaypalOrderId");
 
-        OnModelCreatingPartial(modelBuilder);
+            entity.HasOne(d => d.FOccupancy)
+                .WithMany(p => p.RoomPaymentHistories)
+                .HasForeignKey(d => d.FOccupancyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasMany(e => e.RoomPaymentReceipts)
+                .WithOne(r => r.FPayment)
+                .HasForeignKey(r => r.FPaymentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RoomPaymentReceipt>(entity =>
+        {
+            entity.HasKey(e => e.FReceiptId);  // 明確指定 FReceiptId 為主鍵
+            entity.ToTable("RoomPaymentReceipt");
+            entity.Property(e => e.FReceiptId).HasColumnName("fReceiptId");
+            entity.Property(e => e.FPaymentId).HasColumnName("fPaymentId");
+            entity.Property(e => e.FReceiptNumber).HasMaxLength(50).HasColumnName("fReceiptNumber");
+            entity.Property(e => e.FReceiptDate).HasColumnType("datetime").HasColumnName("fReceiptDate");
+            entity.Property(e => e.FReceiptFilePath).HasColumnName("fReceiptFilePath");
+            entity.Property(e => e.FNotes).HasColumnName("fNotes");
+
+            entity.HasOne(d => d.FPayment)
+                .WithMany(p => p.RoomPaymentReceipts)
+                .HasForeignKey(d => d.FPaymentId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_RoomPaymentReceipt_RoomPaymentHistory");
+        });
     }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder);

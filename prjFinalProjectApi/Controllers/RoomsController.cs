@@ -7,6 +7,10 @@ using System.Linq;
 using System.Security.Claims;
 using PayPalCheckoutSdk.Orders;
 using PayPalCheckoutSdk.Core;
+using PdfSharp.Drawing;
+using PdfSharp.Pdf;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace prjFinalProjectApi.Controllers
 {
@@ -117,26 +121,45 @@ namespace prjFinalProjectApi.Controllers
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new { message = "驗證失敗", errors = ModelState });
+                    return BadRequest(new { message = "驗證失敗", errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
                 }
 
                 var account = User.FindFirstValue(ClaimTypes.Name);
-                var member = await _context.Members.FirstOrDefaultAsync(m => m.FAccount == account);
-                if (member == null || member.FResidesInCareHomeStatus == true)
-                    return BadRequest(new { message = "會員不存在或已入住" });
+                if (string.IsNullOrEmpty(account))
+                {
+                    return Unauthorized(new { message = "未授權用戶" });
+                }
 
-                // 隨機選擇可用床位
-                var availableBeds = await _context.RoomBeds
-                    .Where(b => b.FRoomId == booking.FRoomId && !(b.FBedStatus ?? false)) // 修正: False/null = 可用
-                    .ToListAsync();
+                var member = await _context.Members.FirstOrDefaultAsync(m => m.FAccount == account);
+                if (member == null)
+                {
+                    return NotFound(new { message = "會員不存在" });
+                }
+
+                if (member.FResidesInCareHomeStatus == true)
+                {
+                    return BadRequest(new { message = "您已入住，不能重複預訂" });
+                }
+
+                var room = await _context.RoomTables
+                    .Include(r => r.RoomBeds)
+                    .FirstOrDefaultAsync(r => r.FRoomId == booking.FRoomId);
+
+                if (room == null)
+                {
+                    return NotFound(new { message = "房間不存在" });
+                }
+
+                var availableBeds = room.RoomBeds.Where(b => !(b.FBedStatus ?? false)).ToList();
                 if (!availableBeds.Any())
                 {
                     return BadRequest(new { message = "所選房間無可用床位" });
                 }
-                var selectedBed = availableBeds.OrderBy(b => Guid.NewGuid()).First(); // 隨機選擇
 
-                // 驗證 PayPal 訂單（如果提供）
-                if (!string.IsNullOrEmpty(booking.FPaypalOrderId))
+                var selectedBed = availableBeds.OrderBy(b => Guid.NewGuid()).First();
+
+                // 支付驗證
+                if (booking.FPaymentMethod.ToLower() == "paypal" && !string.IsNullOrEmpty(booking.FPaypalOrderId))
                 {
                     var request = new OrdersGetRequest(booking.FPaypalOrderId);
                     var response = await _payPalClient.Execute(request);
@@ -145,24 +168,76 @@ namespace prjFinalProjectApi.Controllers
                         return BadRequest(new { message = "PayPal 訂單驗證失敗" });
                     }
                 }
-
-                var occupancy = new RoomOccupancy
+                else if (booking.FPaymentMethod.ToLower() == "信用卡")
                 {
-                    FMemberId = member.FMemberId,
-                    FBedId = selectedBed.FBedId,
-                    FCheckInDate = booking.FCheckInDate,
-                    FBillingAmount = booking.FBillingAmount,
-                    FBillingDate = DateTime.UtcNow,
-                    FPaymentMethod = booking.FPaymentMethod,
-                    FBillingStatus = !string.IsNullOrEmpty(booking.FPaypalOrderId),
-                    FPaypalOrderId = booking.FPaypalOrderId
-                };
-                _context.RoomOccupancies.Add(occupancy);
-                selectedBed.FBedStatus = true; // 設為占用 (True)
-                member.FResidesInCareHomeStatus = true;
-                await _context.SaveChangesAsync();
+                    if (string.IsNullOrEmpty(booking.FPaypalOrderId)) // 模擬信用卡支付成功
+                    {
+                        // 這裡可添加信用卡驗證邏輯（暫時跳過）
+                    }
+                }
+                else
+                {
+                    return BadRequest(new { message = "不支持的支付方式" });
+                }
 
-                return Ok(new { message = "預訂提交成功", occupancyId = occupancy.FOccupancyId });
+                using (var transaction = await _context.Database.BeginTransactionAsync())
+                {
+                    try
+                    {
+                        var occupancy = new RoomOccupancy
+                        {
+                            FMemberId = member.FMemberId,
+                            FBedId = selectedBed.FBedId,
+                            FCheckInDate = booking.FCheckInDate,
+                            FBillingStatus = booking.FPaymentMethod.ToLower() == "paypal" ? !string.IsNullOrEmpty(booking.FPaypalOrderId) : true
+                        };
+
+                        _context.RoomOccupancies.Add(occupancy);
+                        await _context.SaveChangesAsync();
+
+                        var payment = new RoomPaymentHistory
+                        {
+                            FOccupancyId = occupancy.FOccupancyId,
+                            FBillingAmount = booking.FBillingAmount,
+                            FBillingDate = DateTime.UtcNow,
+                            FPaymentMethod = booking.FPaymentMethod,
+                            FBillingStatus = booking.FPaymentMethod.ToLower() == "paypal" ? !string.IsNullOrEmpty(booking.FPaypalOrderId) : true,
+                            FPaypalOrderId = booking.FPaypalOrderId
+                        };
+
+                        _context.RoomPaymentHistories.Add(payment);
+                        await _context.SaveChangesAsync();
+
+                        // 移除 RoomPaymentReceipt 邏輯，因為不再生成 PDF
+                        // var receiptNumber = $"REC-{DateTime.UtcNow:yyyyMMdd}-{new Random().Next(100, 999)}";
+                        // var receiptFilePath = GenerateReceiptPdf(receiptNumber, payment);
+                        // var receipt = new RoomPaymentReceipt
+                        // {
+                        //     FPaymentId = payment.FPaymentId,
+                        //     FReceiptNumber = receiptNumber,
+                        //     FReceiptDate = DateTime.UtcNow,
+                        //     FReceiptFilePath = receiptFilePath,
+                        //     FNotes = "初始入住繳費收據"
+                        // };
+                        // _context.RoomPaymentReceipts.Add(receipt);
+                        // await _context.SaveChangesAsync();
+
+                        selectedBed.FBedStatus = true;
+                        member.FResidesInCareHomeStatus = true;
+
+                        await _context.SaveChangesAsync();
+                        await transaction.CommitAsync();
+
+                        return Ok(new { message = "預訂提交成功", occupancyId = occupancy.FOccupancyId }); // 移除 receiptId
+                    }
+                    catch (Exception ex)
+                    {
+                        await transaction.RollbackAsync();
+                        Console.WriteLine($"CreateBooking 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                        Console.WriteLine($"內部異常: {ex.InnerException?.Message}");
+                        return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message, innerError = ex.InnerException?.Message });
+                    }
+                }
             }
             catch (DbUpdateException ex)
             {

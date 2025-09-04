@@ -16,4 +16,6 @@ public partial class RoomVisitReservation
     public DateTime FReservationDate { get; set; }
 
     public DateTime? FCreatedAt { get; set; }
+
+    public bool FStatus { get; set; }
 }
