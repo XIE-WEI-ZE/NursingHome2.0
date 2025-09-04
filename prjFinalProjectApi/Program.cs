@@ -125,6 +125,15 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddScoped<EmployeeApprovalFlowService>();
 builder.Services.AddScoped<prjFinalProjectApi.Services.EmployeeApprovalFlowService>();
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+    // 保留原本的 HTTPS (Swagger 用)
+    options.ListenLocalhost(7124, o => o.UseHttps());
+ 
+    // 讓區網設備透過 http://192.168.x.x:5000 存取
+    options.ListenAnyIP(5000);
+});
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())

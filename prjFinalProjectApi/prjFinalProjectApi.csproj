@@ -6,6 +6,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="wwwroot\barcodes\**" />
+    <Compile Remove="wwwroot\barcode\**" />
+    <Content Remove="wwwroot\barcodes\**" />
+    <Content Remove="wwwroot\barcode\**" />
+    <EmbeddedResource Remove="wwwroot\barcodes\**" />
+    <EmbeddedResource Remove="wwwroot\barcode\**" />
+    <None Remove="wwwroot\barcodes\**" />
+    <None Remove="wwwroot\barcode\**" />
+  </ItemGroup>
+
 
 
   <ItemGroup>
@@ -29,6 +40,7 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.3" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.13.1" />
+    <PackageReference Include="ZXing.Net" Version="0.16.10" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,6 +55,7 @@
     <Folder Include="wwwroot\images\shops\ShopProductThumb\" />
     <Folder Include="wwwroot\images\shops\ShopProductLarge\" />
     <Folder Include="wwwroot\images\stores\" />
+    <Folder Include="wwwroot\qrcodes\" />
   </ItemGroup>
 
 </Project>

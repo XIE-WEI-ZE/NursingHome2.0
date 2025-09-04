@@ -8,8 +8,15 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using ZXing;
+using ZXing.Common;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Formats.Png;
 
 namespace prjFinalProjectApi.Controllers.Supplies
 {
@@ -18,11 +25,13 @@ namespace prjFinalProjectApi.Controllers.Supplies
     public class SuppliesSalesOrdersController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
+        private readonly IWebHostEnvironment _env;
 
 
-        public SuppliesSalesOrdersController(DbNursingHomeContext context)
+        public SuppliesSalesOrdersController(DbNursingHomeContext context, IWebHostEnvironment env)
         {
             _context = context;
+            _env = env;
         }
 
         // GET: api/SuppliesSalesOrders
@@ -175,7 +184,28 @@ namespace prjFinalProjectApi.Controllers.Supplies
             }
         }
 
-
+        // 取得本機 IP 位址（非必要）
+        private string GetServerIp()
+        {
+            string localIp = "localhost"; // fallback 預設
+            try
+            {
+                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                foreach (var ip in host.AddressList)
+                {
+                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    {
+                        localIp = ip.ToString(); // IPv4
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // 如果抓不到，就用 localhost
+            }
+            return localIp;
+        }
 
         // POST: api/SuppliesSalesOrders
         // To protect from overposting attacks, see https://go.microsoft.com/fwlink/?linkid=2123754
@@ -229,7 +259,62 @@ namespace prjFinalProjectApi.Controllers.Supplies
                     parameters
                 );
 
-                return Ok(new { Message = "Order created successfully" });
+                // 取得最新的 OrderId
+                var newOrderId = await _context.SuppliesSalesOrders
+                    .OrderByDescending(o => o.SuppliesSalesOrderId)
+                    .Select(o => o.SuppliesSalesOrderId)
+                    .FirstOrDefaultAsync();
+
+                // 條碼內容 (掃描後要打 API 更新狀態)
+                var folderPath = Path.Combine(_env.WebRootPath, "qrcodes");
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+
+                string serverIp = GetServerIp();
+                string qrText = $"http://{serverIp}:5000/api/SuppliesSalesOrders/{newOrderId}/status?status=已到貨";
+
+                string? qrcodeUrl = null;
+                try
+                {
+                    // 產生條碼
+                    var writer = new ZXing.BarcodeWriterPixelData
+                    {
+                        Format = BarcodeFormat.QR_CODE,
+                        Options = new EncodingOptions
+                        {
+                            Height = 300,
+                            Width = 300,
+                            Margin = 1
+                        }
+                    };
+                    var pixelData = writer.Write(qrText);
+                    var fileName = $"qrcode_{newOrderId}.png";
+                    var filePath = Path.Combine(folderPath, fileName);
+
+                    using (var image = Image.LoadPixelData<Rgba32>(pixelData.Pixels, pixelData.Width, pixelData.Height))
+                    {
+                        await image.SaveAsync(filePath, new PngEncoder());
+                    }
+
+                    qrcodeUrl = $"/qrcodes/{fileName}";
+                }
+                catch (Exception ex)
+                {
+                    // 記 Log，但不要中斷主要流程
+                    Console.WriteLine("Barcode generation failed: " + ex);
+                    throw; // 直接拋出，方便你用 Swagger/前端看錯誤訊息
+                }
+
+                return Ok(new
+                {
+                    Message = "Order created successfully",
+                    OrderId = newOrderId,
+                    QrcodeUrl = qrcodeUrl
+                });
+
+
             }
             catch (Exception ex)
             {
