@@ -24,6 +24,8 @@ namespace prjFinalProjectApi.Models.Dto
         public decimal? LeaveHours { get; set; }
 
         public string? Reason { get; set; }
+        public DateTime? MissingDate { get; set; }
+        public string? ActualInTime { get; set; }
 
         /// <summary>簽核進度（時間軸）</summary>
         public List<EmployeeApprovalLogDto> Logs { get; set; } = new();
