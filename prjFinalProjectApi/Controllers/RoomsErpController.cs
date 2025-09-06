@@ -7,7 +7,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Mail;
+using System.Net;
 using System.Threading.Tasks;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace prjFinalProjectApi.Controllers
 {
@@ -331,7 +334,6 @@ namespace prjFinalProjectApi.Controllers
             {
                 return BadRequest(new { message = "無有效的入住記錄 ID" });
             }
-
             try
             {
                 using (var transaction = await _context.Database.BeginTransactionAsync())
@@ -342,14 +344,11 @@ namespace prjFinalProjectApi.Controllers
                             .Include(o => o.FBed)
                             .Include(o => o.FMember)
                             .FirstOrDefaultAsync(o => o.FOccupancyId == id);
-
                         if (occupancy == null || occupancy.FCheckOutDate != null || occupancy.FCheckInDate == null)
                         {
                             continue;
                         }
-
                         occupancy.FCheckOutDate = DateTime.UtcNow;
-
                         if (occupancy.FBedId.HasValue)
                         {
                             var bed = await _context.RoomBeds.FindAsync(occupancy.FBedId.Value);
@@ -358,17 +357,59 @@ namespace prjFinalProjectApi.Controllers
                                 bed.FBedStatus = false;
                             }
                         }
-
                         if (occupancy.FMemberId.HasValue)
                         {
                             var member = await _context.Members.FindAsync(occupancy.FMemberId.Value);
                             if (member != null)
                             {
                                 member.FResidesInCareHomeStatus = false;
+                                // 獨立實現離院通知郵件
+                                var smtpHost = _config["Smtp:Host"] ?? "smtp.gmail.com";
+                                var smtpPort = int.Parse(_config["Smtp:Port"] ?? "587");
+                                var smtpAccount = _config["Smtp:Account"] ?? "jkldsa1347@gmail.com";
+                                var smtpPassword = _config["Smtp:Password"] ?? "fddnvshelpyycemg";
+                                var fromName = _config["Smtp:FromName"] ?? "Nursing Home";
+
+                                var smtpClient = new SmtpClient
+                                {
+                                    Host = smtpHost,
+                                    Port = smtpPort,
+                                    EnableSsl = true,
+                                    Credentials = new NetworkCredential
+                                    {
+                                        UserName = smtpAccount,
+                                        Password = smtpPassword
+                                    }
+                                };
+
+                                var mailMessage = new MailMessage
+                                {
+                                    From = new MailAddress(smtpAccount, fromName),
+                                    Subject = "離院通知",
+                                    Body = $@"
+                                        <h2>離院通知</h2>
+                                        <p>親愛的 {member.FName ?? "尊敬的用戶"}，</p>
+                                        <p>誠心感謝您選擇入住本院！您的離院手續已於 {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} (UTC) 完成。</p>
+                                        <p>請注意隨身物品是否齊全，如有遺漏，請盡速聯繫我們。</p>
+                                        <p>感謝您入住本院，您的支持對我們意義重大。我們衷心祝福您未來一切順利，並期待有機會再次為您服務！</p>
+                                        <p>此為系統自動發送，請勿直接回覆。如有疑問，請聯繫我們的客服團隊。</p>",
+                                    IsBodyHtml = true
+                                };
+                                mailMessage.To.Add(member.FEmail ?? "no-reply@example.com");
+
+                                try
+                                {
+                                    smtpClient.Send(mailMessage);
+                                    Console.WriteLine($"離院通知郵件已發送至 {member.FEmail ?? "no-reply@example.com"}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"離院通知郵件發送錯誤: {ex.Message}");
+                                    // 這裡選擇僅記錄錯誤，不影響主流程
+                                }
                             }
                         }
                     }
-
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
                     return Ok(new { message = "離院成功" });
@@ -380,95 +421,132 @@ namespace prjFinalProjectApi.Controllers
                 return StatusCode(500, new { message = "離院失敗", error = ex.Message });
             }
         }
-        [HttpGet("payment-history")]
-        [Authorize(Policy = "EmployeeOnly")] // 假設後台需員工權限
-        public async Task<IActionResult> GetPaymentHistory([FromQuery] int? memberId, [FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
-        {
-            var query = _context.RoomPaymentHistories
-         .Include(p => p.FOccupancy)
-         .ThenInclude(o => o.FMember)
-         .Include(p => p.RoomPaymentReceipts)  // 現在能存取，因為模型有定義
-         .AsQueryable();
 
-            if (memberId.HasValue)
-                query = query.Where(p => p.FOccupancy.FMemberId == memberId);
-            if (startDate.HasValue)
-                query = query.Where(p => p.FBillingDate >= startDate);
-            if (endDate.HasValue)
-                query = query.Where(p => p.FBillingDate <= endDate);
-
-            var payments = await query
-          .OrderByDescending(p => p.FBillingDate)
-          .Select(p => new
-          {
-              p.FPaymentId,
-              p.FOccupancyId,
-              p.FBillingAmount,
-              p.FBillingDate,
-              p.FPaymentMethod,
-              Receipt = p.RoomPaymentReceipts.Select(r => new  // 假設多張，取所有或 FirstOrDefault
-              {
-                  r.FReceiptId,
-                  r.FReceiptNumber,
-                  r.FReceiptDate,
-                  r.FReceiptFilePath
-              }).FirstOrDefault()  // 如果通常只有一張，用 FirstOrDefault；若需所有，改為 .ToList()
-          })
-          .ToListAsync();
-
-            return Ok(new { message = "成功獲取繳費記錄", data = payments });
-        }
         // 1. 獲取繳費紀錄
+        // GET: api/RoomsErp/payment-histories
         [HttpGet("payment-histories")]
-        public async Task<IActionResult> GetPaymentHistory()
+        [AllowAnonymous] // 允許匿名訪問
+        public async Task<IActionResult> GetPaymentHistories()
         {
             try
             {
-                var query = _context.RoomOccupancies
-                    .Include(o => o.FMember)
-                    .Include(o => o.RoomPaymentHistories)
-                    .GroupJoin(_context.RoomPaymentHistories, // 使用 GroupJoin 處理多筆支付記錄
+                // 从 RoomOccupancy 开始，左连接 RoomPaymentHistory 和 Members 获取完整信息
+                var occupancyData = await _context.RoomOccupancies
+                    .GroupJoin(
+                        _context.RoomPaymentHistories,
                         o => o.FOccupancyId,
                         p => p.FOccupancyId,
-                        (o, payments) => new { Occupancy = o, Payments = payments })
-                    .SelectMany(x => x.Payments.DefaultIfEmpty(),
-                        (o, p) => new { Occupancy = o.Occupancy, Payment = p })
-                    .GroupBy(x => new { x.Occupancy.FOccupancyId, x.Occupancy.FMemberId, x.Occupancy.FMember.FName, Occupancy = x.Occupancy }) // 包含 Occupancy
-                    .Select(g => new
+                        (o, payments) => new { Occupancy = o, Payments = payments.DefaultIfEmpty() }
+                    )
+                    .SelectMany(x => x.Payments, (o, p) => new
                     {
-                        Key = g.Key,
-                        MaxBillingAmount = g.Select(x => x.Payment == null ? 0 : x.Payment.FBillingAmount).DefaultIfEmpty(0).Max(),
-                        MaxBillingDate = g.Select(x => x.Payment == null ? (DateTime?)null : x.Payment.FBillingDate).Max()
-                    });
+                        Occupancy = o.Occupancy,
+                        Payment = p,
+                        Member = _context.Members.FirstOrDefault(m => m.FMemberId == o.Occupancy.FMemberId)
+                    })
+                    .ToListAsync();
 
-                var intermediateResult = await query.ToListAsync(); // 先執行資料庫查詢
-
-                var paymentHistories = intermediateResult
-                    .Select(g => new PaymentHistoryDto
+                // 按 FOccupancyId 分组
+                var groupedHistories = occupancyData
+                    .GroupBy(x => x.Occupancy.FOccupancyId)
+                    .Select(group =>
                     {
-                        MemberId = g.Key.FMemberId ?? 0,
-                        Name = g.Key.FName ?? "未知",
-                        BillingAmount = g.MaxBillingAmount,
-                        BillingDate = g.MaxBillingDate?.ToString("yyyy-MM-dd") ?? "無",
-                        PaymentHistory = g.Key.Occupancy.RoomPaymentHistories.Select(p => new PaymentHistory
+                        var firstOccupancy = group.First().Occupancy;
+                        var payments = group.Select(x => x.Payment).Where(p => p != null).ToList();
+
+                        return new PaymentHistoryDto
                         {
-                            FPaymentId = p.FPaymentId,
-                            FOccupancyId = p.FOccupancyId,
-                            FBillingAmount = p.FBillingAmount,
-                            FBillingDate = p.FBillingDate,
-                            FPaymentMethod = p.FPaymentMethod ?? "未知",
-                            FBillingStatus = p.FBillingStatus,
-                            FPaypalOrderId = p.FPaypalOrderId ?? "無"
-                        }).ToArray()
+                            PaymentId = payments.Any() ? payments.First().FPaymentId : 0, // 如果没有支付记录，设为 0
+                            OccupancyId = group.Key,
+                            MemberId = firstOccupancy.FMemberId ?? 0,
+                            Name = group.First().Member?.FName ?? "未知",
+                            Phone = group.First().Member?.FPhone ?? "無",
+                            Email = group.First().Member?.FEmail ?? "無",
+                            ResidesInCareHomeStatus = group.First().Member?.FResidesInCareHomeStatus ?? null,
+                            // 使用 RoomOccupancy 的 FBillingStatus 作為繳費狀態
+                            BillingStatus = firstOccupancy.FBillingStatus ?? false, // 如果為 null，預設為 false
+                            BillingAmount = payments.Sum(p => p?.FBillingAmount ?? 0), // 合計所有支付金额
+                            BillingDate = payments.Any() ? payments.Max(p => p?.FBillingDate ?? DateTime.MinValue).ToString("yyyy-MM-dd") : "無",
+                            PaymentMethod = payments.Any() ? payments.First().FPaymentMethod ?? "未知" : "未知",
+                            PaypalOrderId = payments.Any() ? payments.First().FPaypalOrderId ?? "無" : "無",
+                            CheckInDate = firstOccupancy.FCheckInDate.HasValue ? firstOccupancy.FCheckInDate.Value.ToString("yyyy-MM-dd") : "無",
+                            CheckOutDate = firstOccupancy.FCheckOutDate.HasValue ? firstOccupancy.FCheckOutDate.Value.ToString("yyyy-MM-dd") : "無",
+                            // 收集所有支付历史到数组
+                            PaymentHistory = payments
+                                .Where(p => p != null)
+                                .Select(p => new PaymentHistory
+                                {
+                                    FPaymentId = p.FPaymentId,
+                                    FOccupancyId = p.FOccupancyId,
+                                    FBillingAmount = p.FBillingAmount,
+                                    FBillingDate = p.FBillingDate,
+                                    FPaymentMethod = p.FPaymentMethod ?? "未知",
+                                    FBillingStatus = p.FBillingStatus,
+                                    FPaypalOrderId = p.FPaypalOrderId ?? "無"
+                                }).ToArray()
+                        };
                     })
                     .ToList();
 
-                return Ok(paymentHistories);
+                // 檢查每個記錄是否逾期，並寄送通知
+                foreach (var history in groupedHistories)
+                {
+                    if (DateTime.TryParse(history.BillingDate, out DateTime billingDate) && history.BillingDate != "無")
+                    {
+                        DateTime dueDate = billingDate.AddDays(30); // 計算本次繳費時間
+                        if (DateTime.UtcNow > dueDate)
+                        {
+                            // 逾期，寄送通知
+                            string subject = "逾期繳費通知";
+                            string htmlBody = $@"
+<p>親愛的 {history.Name} 先生/女士：</p>
+<p>您的入住編號為 {history.OccupancyId} 的帳單已逾期。</p>
+<p>本應繳費日期為 {dueDate.ToString("yyyy-MM-dd")}。</p>
+<p>請於收到此郵件後盡快完成繳費，以避免影響您的入住權益。我們建議您立即登入系統或聯絡我們處理。</p>
+<p>聯絡方式：電話 {history.Phone} 或電子郵件 {history.Email}。</p>
+<p>感謝您的配合與理解！</p>
+<p>此致<br>Nursing Home 團隊</p>";
+                            SendEmail(history.Email, subject, htmlBody);
+                        }
+                    }
+                }
+
+                return Ok(groupedHistories);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"GetPaymentHistory 錯誤: {ex.Message} - StackTrace: {ex.StackTrace} - InnerException: {ex.InnerException?.Message}");
-                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message, innerError = ex.InnerException?.Message });
+                Console.WriteLine($"GetPaymentHistories 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "伺服器錯誤", error = ex.InnerException?.Message });
+            }
+        }
+
+        // GET: api/RoomsErp/payment-histories/{occupancyId}
+        [HttpGet("payment-histories/{occupancyId}")]
+        [AllowAnonymous] // 允許匿名訪問
+        public async Task<IActionResult> GetPaymentHistoriesByOccupancyId(int occupancyId)
+        {
+            try
+            {
+                var paymentDetails = await _context.RoomPaymentHistories
+                    .Where(p => p.FOccupancyId == occupancyId)
+                    .Select(p => new PaymentHistory
+                    {
+                        FPaymentId = p.FPaymentId,
+                        FOccupancyId = p.FOccupancyId,
+                        FBillingAmount = p.FBillingAmount,
+                        FBillingDate = p.FBillingDate,
+                        FPaymentMethod = p.FPaymentMethod ?? "未知",
+                        FBillingStatus = p.FBillingStatus,
+                        FPaypalOrderId = p.FPaypalOrderId ?? "無"
+                    })
+                    .ToListAsync();
+
+                return Ok(paymentDetails);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"GetPaymentHistoriesByOccupancyId 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "伺服器錯誤", error = ex.InnerException?.Message });
             }
         }
 
@@ -611,6 +689,186 @@ namespace prjFinalProjectApi.Controllers
                 .Select(b => new { b.FBedId, b.FBedCode })
                 .ToListAsync();
             return Ok(beds);
+        }
+
+        // 批量更新預約日期
+        [HttpPut("visit-reservations/batch-update-date")]
+        public async Task<IActionResult> BatchUpdateReservationDate([FromBody] BatchUpdateDateDto dto)
+        {
+            try
+            {
+                if (dto.ReservationIds == null || dto.ReservationIds.Count == 0)
+                {
+                    return BadRequest(new { message = "至少選擇一個預約 ID" });
+                }
+
+                var reservations = await _context.RoomVisitReservations
+                    .Where(r => dto.ReservationIds.Contains(r.FReservationId))
+                    .ToListAsync();
+
+                if (reservations.Count == 0)
+                {
+                    return NotFound(new { message = "未找到匹配的預約記錄" });
+                }
+
+                // 收集原本的預約日期
+                var originalDates = reservations.ToDictionary(r => r.FReservationId, r => r.FReservationDate);
+
+                foreach (var reservation in reservations)
+                {
+                    reservation.FReservationDate = dto.NewDate;
+                }
+
+                await _context.SaveChangesAsync();
+
+                // 發送郵件通知
+                foreach (var reservation in reservations)
+                {
+                    var originalDate = originalDates[reservation.FReservationId];
+                    var htmlBody = $@"
+                        <h2>預約日期更新通知</h2>
+                        <p>親愛的 {reservation.FName}，</p>
+                        <p>您的預約日期被更改</p>
+                        <p>原本預約的時間: {originalDate:yyyy-MM-dd}</p>
+                        <p>更改後預約時間: {dto.NewDate:yyyy-MM-dd}</p>
+                        <p>預約ID: <strong>{reservation.FReservationId}</strong></p>
+                        <p>造成您的困擾敬請見諒！如有任何問題，請聯繫客服:09-8888-8888</p>
+                        <p>此為系統自動發送，請勿直接回覆。</p>
+                        <p>更新時間: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} (UTC)</p>";
+                    SendEmail(reservation.FEmail, "預約日期更新通知", htmlBody);
+                }
+
+                return Ok(new { message = "批量更新日期成功" });
+            }
+            catch (DbUpdateException ex)
+            {
+                Console.WriteLine($"BatchUpdateReservationDate DbUpdateError: {ex.InnerException?.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "資料庫更新錯誤", error = ex.InnerException?.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"BatchUpdateReservationDate 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+            }
+        }
+        // 批量刪除預約
+        [HttpDelete("visit-reservations/batch-delete")]
+        public async Task<IActionResult> BatchDeleteReservations([FromBody] BatchDeleteDto dto)
+        {
+            try
+            {
+                if (dto.ReservationIds == null || dto.ReservationIds.Count == 0)
+                {
+                    return BadRequest(new { message = "至少選擇一個預約 ID" });
+                }
+
+                var reservations = await _context.RoomVisitReservations
+                    .Where(r => dto.ReservationIds.Contains(r.FReservationId))
+                    .ToListAsync();
+
+                if (reservations.Count == 0)
+                {
+                    return NotFound(new { message = "未找到匹配的預約記錄" });
+                }
+
+                _context.RoomVisitReservations.RemoveRange(reservations);
+                await _context.SaveChangesAsync();
+
+                return Ok(new { message = "批量刪除成功" });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"BatchDeleteReservations 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+            }
+        }
+        //預約參訪-聯絡狀態
+        [HttpPut("visit-reservations/batch-update-contact")]
+        public async Task<IActionResult> BatchUpdateContactStatus([FromBody] BatchUpdateContactDto dto)
+        {
+            try
+            {
+                // 檢查輸入參數
+                if (dto.ReservationIds == null || dto.ReservationIds.Count == 0)
+                {
+                    return BadRequest(new { message = "至少選擇一個預約 ID" });
+                }
+
+                // 查詢匹配的預約記錄
+                var reservations = await _context.RoomVisitReservations
+                    .Where(r => dto.ReservationIds.Contains(r.FReservationId))
+                    .ToListAsync();
+
+                // 檢查是否有匹配的記錄
+                if (reservations.Count == 0)
+                {
+                    return NotFound(new { message = "未找到匹配的預約記錄" });
+                }
+
+                // 更新狀態
+                foreach (var reservation in reservations)
+                {
+                    reservation.FStatus = dto.NewStatus; // true: 已聯絡, false: 未聯絡
+                }
+
+                // 儲存更改到資料庫
+                await _context.SaveChangesAsync();
+
+                // 回傳成功訊息
+                return Ok(new { message = "批量聯絡狀態更新成功" });
+            }
+            catch (DbUpdateException ex)
+            {
+                // 處理資料庫更新異常
+                Console.WriteLine($"BatchUpdateContactStatus DbUpdateError: {ex.InnerException?.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "資料庫更新錯誤", error = ex.InnerException?.Message });
+            }
+            catch (Exception ex)
+            {
+                // 處理其他異常
+                Console.WriteLine($"BatchUpdateContactStatus 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+            }
+        }
+        // 郵件 SMTP 設定
+        private void SendEmail(string to, string subject, string htmlBody)
+        {
+            var smtpHost = _config["Smtp:Host"] ?? "smtp.gmail.com";
+            var smtpPort = int.Parse(_config["Smtp:Port"] ?? "587");
+            var smtpAccount = _config["Smtp:Account"] ?? "jkldsa1347@gmail.com";
+            var smtpPassword = _config["Smtp:Password"] ?? "fddnvshelpyycemg";
+            var fromName = _config["Smtp:FromName"] ?? "Nursing Home";
+
+            var smtpClient = new SmtpClient
+            {
+                Host = smtpHost,
+                Port = smtpPort,
+                EnableSsl = true,
+                Credentials = new NetworkCredential
+                {
+                    UserName = smtpAccount,
+                    Password = smtpPassword
+                }
+            };
+
+            var mailMessage = new MailMessage
+            {
+                From = new MailAddress(smtpAccount, fromName),
+                Subject = subject,
+                Body = htmlBody,
+                IsBodyHtml = true
+            };
+            mailMessage.To.Add(to);
+
+            try
+            {
+                smtpClient.Send(mailMessage);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"郵件發送錯誤: {ex.Message}");
+                // 可以選擇記錄錯誤或拋出異常，根據需求處理
+            }
         }
     }
 }

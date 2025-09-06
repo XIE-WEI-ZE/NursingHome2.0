@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using PayPalCheckoutSdk.Orders;
 using PayPalCheckoutSdk.Core;
 using Microsoft.Extensions.Configuration;
+using System.Net.Mail;
+using System.Net;
 
 namespace prjFinalProjectApi.Controllers
 {
@@ -117,7 +119,7 @@ namespace prjFinalProjectApi.Controllers
                 return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
             }
         }
-
+        //延期繳費
         [HttpPost("room/record-payment")]
         [Authorize(Policy = "MemberOnly")]
         public async Task<IActionResult> RecordPayment([FromBody] RoomPaymentDto paymentDto)
@@ -175,6 +177,22 @@ namespace prjFinalProjectApi.Controllers
 
                 Console.WriteLine($"Payment recorded successfully for OccupancyId={paymentDto.OccupancyId}");
 
+                // 發送郵件通知
+                var memberName = member.FName ?? "尊敬的用戶";
+                var paymentMethod = payment.FPaymentMethod;
+                var billingDate = payment.FBillingDate.ToString("yyyy-MM-dd HH:mm:ss (UTC)");
+                var thankYouMessage = "感謝您的及時支付！我們將繼續為您提供溫暖的照護服務，祝您健康幸福！"; // 隨機感謝話語
+                var htmlBody = $@"
+                    <h2>延期繳費支付完成通知</h2>
+                    <p>{memberName}，</p>
+                    <p>您的延期繳費支付已完成！</p>
+                    <p>本次繳費時間為: <strong>{billingDate}</strong></p>
+                    <p>支付方式: <strong>{paymentMethod}</strong></p>
+                    <p>{thankYouMessage}</p>
+                    <p>此為系統自動發送，請勿直接回覆。如有疑問，請聯繫客服:09-8888-8888</p>";
+
+                SendEmail(member.FEmail ?? "no-reply@example.com", "延期繳費支付完成", htmlBody);
+
                 return Ok(new { message = "支付記錄成功", occupancyId = occupancy.FOccupancyId });
             }
             catch (Exception ex)
@@ -220,6 +238,46 @@ namespace prjFinalProjectApi.Controllers
             {
                 Console.WriteLine($"GetReceipt 錯誤: {ex.Message} - StackTrace: {ex.StackTrace}");
                 return StatusCode(500, new { message = "內部伺服器錯誤", error = ex.Message });
+            }
+        }
+        // 自訂 SMTP 發送方法
+        private void SendEmail(string to, string subject, string htmlBody)
+        {
+            var smtpHost = _configuration["Smtp:Host"] ?? "smtp.gmail.com";
+            var smtpPort = int.Parse(_configuration["Smtp:Port"] ?? "587");
+            var smtpAccount = _configuration["Smtp:Account"] ?? "jkldsa1347@gmail.com";
+            var smtpPassword = _configuration["Smtp:Password"] ?? "fddnvshelpyycemg";
+            var fromName = _configuration["Smtp:FromName"] ?? "Nursing Home";
+
+            var smtpClient = new SmtpClient
+            {
+                Host = smtpHost,
+                Port = smtpPort,
+                EnableSsl = true,
+                Credentials = new NetworkCredential
+                {
+                    UserName = smtpAccount,
+                    Password = smtpPassword
+                }
+            };
+
+            var mailMessage = new MailMessage
+            {
+                From = new MailAddress(smtpAccount, fromName),
+                Subject = subject,
+                Body = htmlBody,
+                IsBodyHtml = true
+            };
+            mailMessage.To.Add(to);
+
+            try
+            {
+                smtpClient.Send(mailMessage);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"郵件發送錯誤: {ex.Message}");
+                // 可以選擇記錄錯誤或拋出異常，根據需求處理
             }
         }
     }
