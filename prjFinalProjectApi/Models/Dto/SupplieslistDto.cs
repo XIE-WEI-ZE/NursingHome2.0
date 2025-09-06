@@ -22,4 +22,15 @@
 
         public bool? Exist { get; set; }
     }
+
+    public class SuppliesImportResult
+    {
+        public int Inserted { get; set; }
+        public List<string> Errors { get; set; } = new();
+    }
+
+    public class ExcelImportRequest
+    {
+        public IFormFile File { get; set; } = default!;
+    }
 }

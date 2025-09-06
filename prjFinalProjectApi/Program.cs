@@ -11,7 +11,10 @@ using prjFinalProjectApi.Services;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.StaticFiles;   // ⬅️ 新增
+using OfficeOpenXml;
 
+// ===== EPPlus =====
+ExcelPackage.License.SetNonCommercialPersonal("NursingHouse");
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -120,6 +123,7 @@ builder.Services.AddSwaggerGen(c =>
     });
     c.CustomSchemaIds(t => t.FullName?.Replace("+", "."));
     c.MapType<DateOnly>(() => new OpenApiSchema { Type = "string", Format = "date" });
+    c.MapType<DateOnly?>(() => new OpenApiSchema { Type = "string", Format = "date", Nullable = true });
     c.MapType<TimeOnly>(() => new OpenApiSchema { Type = "string", Format = "time" });
 });
 builder.Services.AddScoped<EmployeeApprovalFlowService>();
