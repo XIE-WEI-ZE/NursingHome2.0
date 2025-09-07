@@ -22,4 +22,19 @@ namespace prjFinalProjectApi.Models.Dto
         [Required]
         public DateTime FReservationDate { get; set; }
     }
+    public class BatchUpdateContactDto
+    {
+        public List<int> ReservationIds { get; set; }
+        public bool NewStatus { get; set; } // true: 已聯絡, false: 未聯絡
+    }
+
+    public class BatchDeleteDto
+    {
+        public List<int> ReservationIds { get; set; }
+    }
+    public class BatchUpdateDateDto
+    {
+        public List<int> ReservationIds { get; set; }
+        public DateTime NewDate { get; set; }
+    }
 }

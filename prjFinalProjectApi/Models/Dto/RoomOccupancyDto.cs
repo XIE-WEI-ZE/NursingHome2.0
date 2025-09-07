@@ -5,19 +5,21 @@ namespace prjFinalProjectApi.Models.Dto
     public class RoomOccupancyDto
     {
         [Required]
-        public int FRoomId { get; set; } // 新增: 傳房間 ID，後端隨機選床位
-        public int FOccupancyId { get; set; } // 可選，由後端生成
+        public int FMemberId { get; set; } // 新增會員 ID
         [Required]
-        public int FBedId { get; set; } // 對應 RoomOccupancy 的 FBedId
+        public int FRoomId { get; set; }
+        public int FOccupancyId { get; set; }
         [Required]
-        public DateTime FCheckInDate { get; set; } // 移除 null 可能性
+        public int FBedId { get; set; }
+        [Required]
+        public DateTime FCheckInDate { get; set; }
 
         [Required]
         public int FBillingAmount { get; set; }
         [Required]
         [MaxLength(50)]
         public string FPaymentMethod { get; set; } = null!;
-        [MaxLength(255)] // 可選，儲存 PayPal 訂單 ID
-        public string FPaypalOrderId { get; set; } // 新增 PayPal 訂單 ID
+        [MaxLength(255)]
+        public string FPaypalOrderId { get; set; }
     }
 }
