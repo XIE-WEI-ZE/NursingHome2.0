@@ -88,8 +88,7 @@ namespace prjFinalProjectApi.Controllers.Employee
             var me = User.EmployeeId();
             if (me == 0) return Unauthorized("找不到員工身分");
 
-            var q = _ctx.EmployeeApprovalLogs.AsNoTracking()
-                .Where(l => l.ApproverId == me);
+            var q = _ctx.EmployeeApprovalLogs.AsNoTracking().Where(l => l.ApproverId == me);
 
             if (!string.IsNullOrWhiteSpace(formType))
                 q = q.Where(l => l.FormType == formType);
@@ -299,9 +298,6 @@ namespace prjFinalProjectApi.Controllers.Employee
                 })
                 .ToListAsync();
 
-            // ※ 如果要讓畫面更精簡（每關只顯示一點），可以取消註解這行：
-            // logs = logs.GroupBy(l => l.StepName).Select(g => g.First()).ToList();
-
             var myApprovalId = await _ctx.EmployeeApprovalLogs.AsNoTracking()
                 .Where(x => x.FormType == formType
                         && x.FormId == formId
@@ -319,13 +315,17 @@ namespace prjFinalProjectApi.Controllers.Employee
                 ApplicantName = header.ApplicantName ?? "",
                 ApplyDate = header.ApplyDate,
 
-                // Leave 專屬欄位（MissingPunch 為 null）
+                // Leave 專屬
                 LeaveTypeName = header.LeaveTypeName,
                 StartDate = header.StartDate,
                 EndDate = header.EndDate,
                 StartTime = header.StartTime,
                 EndTime = header.EndTime,
                 LeaveHours = header.LeaveHours,
+
+                // MissingPunch 專屬
+                MissingDate = header.MissingDate,
+                ActualInTime = header.ActualInTime,
 
                 Reason = header.Reason,
                 Logs = logs,
@@ -336,7 +336,6 @@ namespace prjFinalProjectApi.Controllers.Employee
         }
 
         // ─────────────────── 5) 簽核通過 / 退回 / 抽單
-        // PUT: api/EmployeeApprovalLogs/{approvalId}/approve
         [HttpPut("{approvalId:int}/approve")]
         public async Task<IActionResult> Approve(int approvalId, [FromBody] EmployeeApprovalActionDto dto)
         {
@@ -347,7 +346,6 @@ namespace prjFinalProjectApi.Controllers.Employee
             return Ok();
         }
 
-        // PUT: api/EmployeeApprovalLogs/{approvalId}/reject
         [HttpPut("{approvalId:int}/reject")]
         public async Task<IActionResult> Reject(int approvalId, [FromBody] EmployeeApprovalActionDto dto)
         {
@@ -358,14 +356,12 @@ namespace prjFinalProjectApi.Controllers.Employee
             return Ok();
         }
 
-        // PUT: api/EmployeeApprovalLogs/cancel/{formType}/{formId}
         [HttpPut("cancel/{formType}/{formId:int}")]
         public async Task<IActionResult> Cancel(string formType, int formId)
         {
             var me = User.EmployeeId();
             if (me == 0) return Unauthorized("找不到員工身分");
 
-            // 只有申請本人且流程仍有 Waiting/排隊中 才允許抽單
             var anyWaiting = await _ctx.EmployeeApprovalLogs.AsNoTracking()
                 .AnyAsync(l => l.FormType == formType && l.FormId == formId &&
                                (l.ApproveStatus == DB_Waiting || l.ApproveStatus == DB_Queued || l.ApproveStatus == SWaiting));
@@ -374,7 +370,6 @@ namespace prjFinalProjectApi.Controllers.Employee
             if (!anyWaiting || applicantId != me)
                 return BadRequest("不可抽單");
 
-            // 標題 Cancel + 終止所有節點
             await _flow.MarkHeaderAsync(formType, formId, SCancelled);
 
             var nodes = await _ctx.EmployeeApprovalLogs
@@ -408,6 +403,9 @@ namespace prjFinalProjectApi.Controllers.Employee
             // 共用
             public string? Reason { get; set; }
             public bool CanCancel { get; set; }
+            // MissingPunch
+            public DateTime? MissingDate { get; set; } // DB: WorkDate (DateOnly?)
+            public string? ActualInTime { get; set; } // DB: RequestedTime (TimeSpan?/DateTime?) → "HH:mm"
         }
 
         private static readonly Regex TimeTag =
@@ -483,6 +481,8 @@ namespace prjFinalProjectApi.Controllers.Employee
                         ApplicantName = e.Name,
                         m.ApplyDate,
                         m.ApplyReason,
+                        m.WorkDate,        // date -> DateOnly?
+                        m.RequestedTime,   // datetime -> DateTime?
                         ApplicantId = m.EmployeeId
                     }
                 ).FirstOrDefaultAsync();
@@ -495,14 +495,27 @@ namespace prjFinalProjectApi.Controllers.Employee
                                    (x.ApproveStatus == DB_Waiting || x.ApproveStatus == DB_Queued || x.ApproveStatus == SWaiting));
                 var canCancel = (me != 0 && (a.ApplicantId ?? 0) == me && hasPending);
 
+                // DateOnly? -> DateTime?
+                DateTime? missingDate = a.WorkDate.HasValue
+                    ? a.WorkDate.Value.ToDateTime(TimeOnly.MinValue)
+                    : (DateTime?)null;
+
+                // DateTime? -> HH:mm
+                string? actualInTime = a.RequestedTime.HasValue
+                    ? a.RequestedTime.Value.ToString("HH:mm")
+                    : null;
+
                 return new FormHeader
                 {
                     ApplicantName = a.ApplicantName ?? "",
                     ApplyDate = a.ApplyDate,
                     Reason = a.ApplyReason,
+                    MissingDate = missingDate,
+                    ActualInTime = actualInTime,
                     CanCancel = canCancel
                 };
             }
+
 
             return null;
         }
@@ -521,8 +534,7 @@ namespace prjFinalProjectApi.Controllers.Employee
         }
 
         // ─────────────────── 清單拼接（Leave / MissingPunch）
-        private async Task<List<EmployeeApprovalInboxItemDto>> BuildInboxLikeRowsAsync(
-            IEnumerable<dynamic> logTriples, bool isInbox)
+        private async Task<List<EmployeeApprovalInboxItemDto>> BuildInboxLikeRowsAsync(IEnumerable<dynamic> logTriples, bool isInbox)
         {
             var list = new List<EmployeeApprovalInboxItemDto>();
 
