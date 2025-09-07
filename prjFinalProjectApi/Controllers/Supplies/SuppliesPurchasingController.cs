@@ -48,6 +48,53 @@ namespace prjFinalProjectApi.Controllers.Supplies
             return Ok(suppliesPurchasingOrders);
         }
 
+        [HttpGet("search")]
+        public async Task<ActionResult<object>> SearchPurchasingOrders(
+        string? keyword = "",
+        int page = 1,
+        int pageSize = 10
+    )
+            {
+            var query = from spo in _context.SuppliesPurchasingOrders
+                        join spod in _context.SuppliesPurchasingOrderDetails on spo.SuppliesPurchasingOrderId equals spod.SuppliesPurchasingOrderId
+                        join sp in _context.SuppliesProducts on spod.SuppliesProductId equals sp.SuppliesProductId
+                        join spc in _context.SuppliesCategories on sp.SuppliesCategoryId equals spc.SuppliesCategoryId
+                        join sps in _context.SuppliesSuppliers on spo.SuppliesSupplierId equals sps.SuppliesSupplierId
+                        select new SuppliespurchasingDto
+                        {
+                            SuppliesPurchasingOrderId = spo.SuppliesPurchasingOrderId,
+                            SuppliesSupplierId = spo.SuppliesSupplierId,
+                            ArrivalDate = spo.ArrivalDate,
+                            SuppliesPurchasingOrderDetailId = spod.SuppliesPurchasingOrderDetailId,
+                            SuppliesProductId = spod.SuppliesProductId,
+                            SuppliesProductName = sp.SuppliesProductName,
+                            QuantityIn = spod.QuantityIn,
+                            ExpiryDate = spod.ExpiryDate,
+                            SuppliesSupplierName = sps.SuppliesSupplierName,
+                            SuppliesCategoryId = spc.SuppliesCategoryId,
+                            SuppliesCategoryName = spc.SuppliesCategoryName
+                        };
+
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(o =>
+                    o.SuppliesSupplierName.Contains(keyword) ||
+                    o.SuppliesProductName.Contains(keyword) ||
+                    o.SuppliesCategoryName.Contains(keyword));
+            }
+
+            var totalCount = await query.CountAsync();
+            var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+            var data = await query
+                .OrderByDescending(o => o.SuppliesPurchasingOrderId)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Ok(new { totalCount, totalPages, page, pageSize, data });
+        }
+
         // GET: api/SuppliesPurchasing/5
         [HttpGet("{id}")]
         public async Task<ActionResult<SuppliesPurchasingOrder>> GetSuppliesPurchasingOrder(int id)
