@@ -72,13 +72,18 @@ namespace prjFinalProjectApi.Hubs
                     return;
                 }
 
-                // 取得發送者名稱
-                var senderName = Context.User?.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")?.Value ?? "未知用戶";
-
-                // 根據角色設定 senderType
+                // 根據角色設定 senderType（先決定類型，再用於後續判斷）
                 var roleClaim = Context.User?.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value
-                                ?? Context.User?.FindFirst("role")?.Value;
-                string senderType = (roleClaim == "Employee" || roleClaim == "Staff") ? "staff" : "member";
+                        ?? Context.User?.FindFirst("role")?.Value;
+                string senderType = (roleClaim == "Employee" || roleClaim == "Staff" || userId == 1) ? "staff" : "member"; // 加入 userId == 1 作為備用
+
+                // 取得發送者名稱（若為 staff，可覆寫為「客服」或改為查員工表）
+                var member = await _context.Members.FindAsync(userId);
+                var senderName = member != null ? (member.FName ?? member.FAccount) : "未知用戶";
+                if (senderType == "staff")
+                {
+                    senderName = "客服"; // 或查詢員工名稱
+                }
 
                 // 建立訊息物件並寫入 DB（使用 CommunityMessage）
                 var chatMessage = new CommunityMessage
@@ -91,18 +96,27 @@ namespace prjFinalProjectApi.Hubs
                 _context.CommunityMessages.Add(chatMessage);
                 await _context.SaveChangesAsync();
 
-                Console.WriteLine($"Customer Service Message saved to DB: Ticket {ticketId}, Sender {userId}, Type {senderType}");
-
-                // 廣播給房間的其他成員（排除發送者）
+                // 群組名稱（在送出訊息前先定義）
                 string groupName = $"ticket-{ticketId}";
-                await Clients.OthersInGroup(groupName).SendAsync("ReceiveMessage",
-                    ticketId.ToString(),
-                    userId.ToString(),
+
+                // 推送訊息給發送者與群組內其他人
+                await Clients.Caller.SendAsync("ReceiveMessage",
+                    ticketId,
+                    userId,
                     senderName,
                     message,
                     chatMessage.SentAt.ToString("yyyy-MM-dd HH:mm:ss"),
-                    senderType); // 添加 senderType 到廣播
+                    senderType);
 
+                await Clients.OthersInGroup(groupName).SendAsync("ReceiveMessage",
+                    ticketId,
+                    userId,
+                    senderName,
+                    message,
+                    chatMessage.SentAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                    senderType);
+
+                Console.WriteLine($"Customer Service Message saved to DB: Ticket {ticketId}, Sender {userId}, Type {senderType}");
                 Console.WriteLine($"Message broadcasted to conversation {ticketId}");
             }
             catch (Exception ex)

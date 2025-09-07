@@ -1,9 +1,11 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using prjFinalProjectApi.Hubs;
 using prjFinalProjectApi.Models;
-using System.Security.Claims;
 using System.Linq;
+using System.Security.Claims;
 
 namespace prjFinalProjectApi.Controllers
 {
@@ -12,10 +14,13 @@ namespace prjFinalProjectApi.Controllers
     public class CommunityCustomerServiceController : ControllerBase
     {
         private readonly DbNursingHomeContext _context;
+        private readonly IHubContext<CustomerServiceHub> _hubContext;
 
-        public CommunityCustomerServiceController(DbNursingHomeContext context)
+        // 注入 IHubContext<CustomerServiceHub>
+        public CommunityCustomerServiceController(DbNursingHomeContext context, IHubContext<CustomerServiceHub> hubContext)
         {
             _context = context;
+            _hubContext = hubContext;
         }
 
         // Helper: 由 JWT claims 嘗試取得 memberId（若沒有可傳入 query/body）
@@ -44,7 +49,7 @@ namespace prjFinalProjectApi.Controllers
                 MemberId = memberId.Value,
                 Category = req.Category ?? "一般",
                 TicketsPriority = req.Priority ?? "Normal",
-                TicketsStatus = "Open",
+                TicketsStatus = "等待",
                 Title = req.Subject ?? "", // model 使用 Title
                 CreatedAt = DateTime.Now,
                 UpdatedAt = DateTime.Now
@@ -63,6 +68,23 @@ namespace prjFinalProjectApi.Controllers
 
             _context.CommunityMessages.Add(message);
             await _context.SaveChangesAsync();
+
+            // 推送新對話到所有員工
+            await _hubContext.Clients.All.SendAsync("NewConversation", new
+            {
+                id = ticket.TicketId,
+                memberId = ticket.MemberId,
+                memberName = _context.Members
+                    .Where(m => m.FMemberId == ticket.MemberId)
+                    .Select(m => m.FName ?? m.FAccount)
+                    .FirstOrDefault() ?? "匿名",
+                status = ticket.TicketsStatus,
+                priority = ticket.TicketsPriority,
+                category = ticket.Category,
+                title = ticket.Title,
+                latestMessage = req.InitialMessage ?? "",
+                lastMessageTime = ticket.CreatedAt
+            });
 
             return Ok(new { ticketId = ticket.TicketId });
         }
@@ -244,7 +266,7 @@ namespace prjFinalProjectApi.Controllers
             return Ok(new { messageId = message.MessageId });
         }
 
-        // 後台更新會話狀態（例如：Open/Pending/Closed）
+        // 後台更新會話狀態
         [HttpPatch("staff/conversations/{conversationId}/status")]
         [Authorize(Policy = "EmployeeCookieOnly")]
         public async Task<IActionResult> StaffUpdateStatus(int conversationId, [FromBody] UpdateStatusRequest req)

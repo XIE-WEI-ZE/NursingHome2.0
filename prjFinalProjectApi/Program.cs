@@ -92,9 +92,11 @@ builder.Services.AddAuthorization(options =>
          .RequireAuthenticatedUser());
 });
 
-// LLM 服務（Ollama）
-builder.Services.AddScoped<IAIService>(sp =>
-    new OllamaService(sp.GetRequiredService<HttpClient>(), "https://myapp.tojing.dpdns.org/api/generate"));
+// LLM 服務（遠端連線到AI伺服器）
+builder.Services.AddHttpClient<IAIService, RemoteAIService>(client =>
+{
+    client.BaseAddress = new Uri("https://myapp.tojing.dpdns.org");
+});
 
 // ===== Swagger（開發期）=====
 builder.Services.AddEndpointsApiExplorer();
