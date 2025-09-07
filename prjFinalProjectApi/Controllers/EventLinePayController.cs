@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Services;
 using System;
-using System.Linq; // 確保有 LINQ
+using System.Linq; 
 using System.Text.Json; // 若要處理 JsonElement
 
 namespace prjFinalProjectApi.Controllers
@@ -128,7 +128,7 @@ namespace prjFinalProjectApi.Controllers
             return BadRequest(new { success = false, message = result.returnMessage, raw = result.raw });
         }
 
-        // 直接代送你貼的 JSON 給 LINE Pay（僅測試用）
+        // 直接代送你貼的 JSON 給 LINE Pay
         [HttpPost("_test/request")]
         public async Task<IActionResult> TestRequest([FromBody] JsonElement body)
         {
