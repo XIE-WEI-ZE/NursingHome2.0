@@ -18,6 +18,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using ZXing;
 using ZXing.Common;
+using prjFinalProjectApi.Hubs;   // ✅ 新增
+using Microsoft.AspNetCore.SignalR; // ✅ 新增
 
 namespace prjFinalProjectApi.Controllers.Supplies
 {
@@ -27,13 +29,18 @@ namespace prjFinalProjectApi.Controllers.Supplies
     {
         private readonly DbNursingHomeContext _context;
         private readonly IWebHostEnvironment _env;
+        private readonly IHubContext<OrderHub> _hubContext; // ✅ 新增
 
-
-        public SuppliesSalesOrdersController(DbNursingHomeContext context, IWebHostEnvironment env)
+        // ✅ 修改建構子，注入 hubContext
+        public SuppliesSalesOrdersController(DbNursingHomeContext context,
+                                             IWebHostEnvironment env,
+                                             IHubContext<OrderHub> hubContext)
         {
             _context = context;
             _env = env;
+            _hubContext = hubContext;
         }
+
 
         // GET: api/SuppliesSalesOrders
         [HttpGet]
@@ -278,7 +285,7 @@ namespace prjFinalProjectApi.Controllers.Supplies
                 //string qrText = $"http://{serverIp}:7124/api/SuppliesSalesOrders/{newOrderId}/status?status=已到貨";
                 //string qrText = $"http://{serverIp}:7124/api/SuppliesSalesOrders/{newOrderId}/quick-confirm?status=已到貨";
                 // 使用 ngrok 的公開網址
-                // ⚠ 這裡要替換成你的 ngrok Forwarding 網址
+                // ngrok Forwarding 網址
 
                 string publicBase = "https://a42306927f3b.ngrok-free.app";
                 // 把「已到貨」轉成 URL 安全字串，避免中文在掃描 QR Code 時被吃掉
@@ -354,34 +361,37 @@ namespace prjFinalProjectApi.Controllers.Supplies
             {
                 var parameters = new[]
                 {
-            new SqlParameter("@SuppliesSalesOrderID", id),
-            new SqlParameter("@NewStatus", status)
-        };
+                    new SqlParameter("@SuppliesSalesOrderID", id),
+                    new SqlParameter("@NewStatus", status)
+                };
 
                 await _context.Database.ExecuteSqlRawAsync(
                     "EXEC sp_UpdateSalesOrderStatus @SuppliesSalesOrderID, @NewStatus",
                     parameters
                 );
 
-                // 回手機一個簡單頁面即可
+                // ✅ 推播事件到前端
+                await _hubContext.Clients.All.SendAsync("OrderStatusChanged", id, status);
+
+                // 回手機一個簡單頁面
                 var html = $"""
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <div style="font-family:system-ui;padding:24px">
-          <h2>狀態已更新</h2>
-          <p>訂單 #{id} 已更新為：{System.Net.WebUtility.HtmlEncode(status)}</p>
-        </div>
-        """;
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <div style="font-family:system-ui;padding:24px">
+                  <h2>狀態已更新</h2>
+                  <p>訂單 #{id} 已更新為：{System.Net.WebUtility.HtmlEncode(status)}</p>
+                </div>
+                """;
                 return Content(html, "text/html; charset=utf-8");
             }
             catch (Exception ex)
             {
                 var html = $"""
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <div style="font-family:system-ui;padding:24px;color:#c00">
-          <h2>更新失敗</h2>
-          <pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre>
-        </div>
-        """;
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <div style="font-family:system-ui;padding:24px;color:#c00">
+                  <h2>更新失敗</h2>
+                  <pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre>
+                </div>
+                """;
                 return Content(html, "text/html; charset=utf-8");
             }
         }

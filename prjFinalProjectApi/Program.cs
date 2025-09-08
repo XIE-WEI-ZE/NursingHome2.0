@@ -181,6 +181,8 @@ app.UseAuthorization();
 
 app.MapHub<ChatHub>("/chathub"); // 一般聊天室
 app.MapHub<CustomerServiceHub>("/customerServiceHub"); // 客服專用
+app.MapHub<OrderHub>("/orderHub"); //訂單專用
+
 app.MapControllers();
 
 
