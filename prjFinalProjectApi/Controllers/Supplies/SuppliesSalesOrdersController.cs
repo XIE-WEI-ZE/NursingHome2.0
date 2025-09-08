@@ -1,9 +1,14 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using prjFinalProjectApi.Models;
 using prjFinalProjectApi.Models.Dto;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using System;
 using System.Collections.Generic;
 using System.Configuration;
@@ -13,10 +18,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using ZXing;
 using ZXing.Common;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Formats.Png;
 
 namespace prjFinalProjectApi.Controllers.Supplies
 {
@@ -273,7 +274,21 @@ namespace prjFinalProjectApi.Controllers.Supplies
                 }
 
                 string serverIp = GetServerIp();
-                string qrText = $"http://{serverIp}:5000/api/SuppliesSalesOrders/{newOrderId}/status?status=已到貨";
+                //5000改7124
+                //string qrText = $"http://{serverIp}:7124/api/SuppliesSalesOrders/{newOrderId}/status?status=已到貨";
+                //string qrText = $"http://{serverIp}:7124/api/SuppliesSalesOrders/{newOrderId}/quick-confirm?status=已到貨";
+                // 使用 ngrok 的公開網址
+                // ⚠ 這裡要替換成你的 ngrok Forwarding 網址
+
+                string publicBase = "https://a42306927f3b.ngrok-free.app";
+                // 把「已到貨」轉成 URL 安全字串，避免中文在掃描 QR Code 時被吃掉
+                string status = System.Net.WebUtility.UrlEncode("已到貨");
+                // 產生完整的 API 網址
+                string qrText = $"{publicBase}/api/SuppliesSalesOrders/{newOrderId}/quick-confirm?status={status}";
+                // Debug 輸出，方便確認 QR Code 文字
+                Console.WriteLine("產生的 QR 文字：" + qrText);
+
+
 
                 string? qrcodeUrl = null;
                 try
@@ -326,6 +341,51 @@ namespace prjFinalProjectApi.Controllers.Supplies
                 });
             }
         }
+
+        // ✅ 給 QR 掃用：允許匿名（若全站有驗證）
+        [AllowAnonymous]
+        [HttpGet("{id}/quick-confirm")]
+        public async Task<IActionResult> QuickConfirm(int id, [FromQuery] string status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+                return Content("<h3>缺少狀態參數</h3>", "text/html; charset=utf-8");
+
+            try
+            {
+                var parameters = new[]
+                {
+            new SqlParameter("@SuppliesSalesOrderID", id),
+            new SqlParameter("@NewStatus", status)
+        };
+
+                await _context.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_UpdateSalesOrderStatus @SuppliesSalesOrderID, @NewStatus",
+                    parameters
+                );
+
+                // 回手機一個簡單頁面即可
+                var html = $"""
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <div style="font-family:system-ui;padding:24px">
+          <h2>狀態已更新</h2>
+          <p>訂單 #{id} 已更新為：{System.Net.WebUtility.HtmlEncode(status)}</p>
+        </div>
+        """;
+                return Content(html, "text/html; charset=utf-8");
+            }
+            catch (Exception ex)
+            {
+                var html = $"""
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <div style="font-family:system-ui;padding:24px;color:#c00">
+          <h2>更新失敗</h2>
+          <pre>{System.Net.WebUtility.HtmlEncode(ex.Message)}</pre>
+        </div>
+        """;
+                return Content(html, "text/html; charset=utf-8");
+            }
+        }
+
 
         // DELETE: api/SuppliesSalesOrders/5
         [HttpDelete("{id}")]
